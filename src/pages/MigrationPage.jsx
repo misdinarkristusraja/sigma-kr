@@ -60,6 +60,7 @@ const MIGRATION_TYPES = [
   { key: 'regis',   label: 'Registrasi — responses.xlsx (resp_regis)',   sheet: 'resp_regis', color: 'bg-green-50 border-green-300' },
   { key: 'absen',   label: 'Absensi — responses.xlsx (resp_absen)',      sheet: 'resp_absen', color: 'bg-yellow-50 border-yellow-300'},
   { key: 'swap',    label: 'Tukar Jadwal — responses.xlsx (resp_swap)',  sheet: 'resp_swap',  color: 'bg-purple-50 border-purple-300'},
+  { key: 'jadwal',  label: 'Jadwal Historis — format: Tanggal, Perayaan, Misa, id', sheet: 'Sheet1', color: 'bg-orange-50 border-orange-300'},
 ];
 
 // Definisi field yang perlu di-map per jenis migrasi
@@ -100,6 +101,12 @@ const FIELD_DEFS = {
     { key: 'tertukar',     label: 'Nickname Tertukar',required: true, hints: ['tertukar','dari','requester'] },
     { key: 'penukar',      label: 'Nickname Penukar', required: true, hints: ['penukar','ke','ganti'] },
     { key: 'tanggal_misa', label: 'Tanggal Misa',    required: false, hints: ['tanggal','misa','date'] },
+  ],
+  jadwal: [
+    { key: 'tanggal',   label: '⭐ Tanggal',    required: true,  hints: ['tanggal','date','tgl'] },
+    { key: 'perayaan',  label: '⭐ Perayaan',   required: true,  hints: ['perayaan','nama','event','misa'] },
+    { key: 'slot',      label: '⭐ Misa / Slot', required: true,  hints: ['misa','slot','sesi','jadwal'] },
+    { key: 'nickname',  label: '⭐ ID / Nickname', required: true, hints: ['id','nickname','panggilan'] },
   ],
 };
 
@@ -239,6 +246,7 @@ export default function MigrationPage() {
       try {
         if (migType === 'members') await doImportMember(row);
         if (migType === 'regis')   await doImportRegis(row);
+        if (migType === 'jadwal')  await doImportJadwal(row);
         if (migType === 'absen')   await doImportAbsen(row);
         if (migType === 'swap')    await doImportSwap(row);
         ok++;
@@ -373,6 +381,138 @@ export default function MigrationPage() {
     if (error && !error.message.includes('foreign key')) throw new Error(error.message);
   }
 
+  // Cache event lookup (perayaan+tanggal → event_id)
+  // Didefinisikan di luar fungsi agar persisten selama satu sesi import
+  const eventCache = {};
+
+  async function doImportJadwal(row) {
+    // ── 1. Ambil nilai kolom ──────────────────────────────
+    const tanggalRaw  = getCol(row, colMap.tanggal);
+    const perayaan    = getCol(row, colMap.perayaan).trim();
+    const misaRaw     = getCol(row, colMap.slot).trim();
+    const nickname    = getCol(row, colMap.nickname).toLowerCase().trim();
+
+    if (!tanggalRaw)  throw new Error('Kolom Tanggal kosong');
+    if (!perayaan)    throw new Error('Kolom Perayaan kosong');
+    if (!misaRaw)     throw new Error('Kolom Misa/Slot kosong');
+    if (!nickname)    throw new Error('Kolom ID/Nickname kosong');
+
+    // ── 2. Parse tanggal (DD/MM/YYYY atau YYYY-MM-DD) ────
+    let tanggal = '';
+    if (tanggalRaw instanceof Date) {
+      // Excel date object
+      const d = tanggalRaw;
+      tanggal = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    } else {
+      const str = String(tanggalRaw).trim();
+      // DD/MM/YYYY
+      const ddmm = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (ddmm) {
+        tanggal = `${ddmm[3]}-${ddmm[2].padStart(2,'0')}-${ddmm[1].padStart(2,'0')}`;
+      } else {
+        // YYYY-MM-DD atau format lain
+        const d = new Date(str);
+        if (!isNaN(d.getTime())) {
+          tanggal = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        } else {
+          throw new Error(`Format tanggal tidak dikenali: "${tanggalRaw}"`);
+        }
+      }
+    }
+
+    // ── 3. Parse slot number dari kolom Misa ─────────────
+    // Format: "1. Sabtu Sore", "2. Minggu I", "3. Minggu II", "4. Minggu Sore"
+    // atau angka langsung: "1", "2", "3", "4"
+    let slotNumber = 0;
+    const slotLead = misaRaw.match(/^(\d)/);
+    if (slotLead) {
+      slotNumber = parseInt(slotLead[1], 10);
+    } else {
+      // Fallback: cari kata kunci
+      const lower = misaRaw.toLowerCase();
+      if (lower.includes('sabtu') || lower.includes('sore') && lower.includes('1')) slotNumber = 1;
+      else if (lower.includes('pagi i') || lower.includes('minggu i') || lower.includes('06')) slotNumber = 2;
+      else if (lower.includes('pagi ii') || lower.includes('minggu ii') || lower.includes('08')) slotNumber = 3;
+      else if (lower.includes('sore') || lower.includes('17')) slotNumber = 4;
+      else slotNumber = 1; // default
+    }
+    if (slotNumber < 1 || slotNumber > 4) throw new Error(`Slot tidak valid: "${misaRaw}"`);
+
+    // Slot 1 (Sabtu Sore) → tanggal_tugas = Minggu, tanggal event adalah Sabtu
+    // Kita simpan tanggal_tugas = Minggu berikutnya jika Sabtu
+    // Tapi untuk konsistensi dengan format lama, gunakan tanggal apa adanya dari file
+    // Slot 1 biasanya dicatat di tanggal Sabtu, slot 2-4 di tanggal Minggu
+    // Event dibedakan berdasarkan perayaan + minggu (Sabtu+Minggu = 1 event)
+    let tanggalTugas = tanggal;
+    if (slotNumber === 1) {
+      // Sabtu → Minggu berikutnya sebagai tanggal_tugas
+      const sat = new Date(tanggal + 'T00:00:00');
+      const sun = new Date(sat);
+      sun.setDate(sat.getDate() + 1);
+      tanggalTugas = `${sun.getFullYear()}-${String(sun.getMonth()+1).padStart(2,'0')}-${String(sun.getDate()).padStart(2,'0')}`;
+    }
+    const tanggalLatihan = slotNumber === 1 ? tanggal : null; // Sabtu = latihan/slot1
+
+    // ── 4. Cari atau buat event ───────────────────────────
+    const cacheKey = `${tanggalTugas}__${perayaan.toUpperCase()}`;
+    let eventId = eventCache[cacheKey];
+
+    if (!eventId) {
+      // Cari existing event
+      const { data: existing } = await supabase
+        .from('events')
+        .select('id')
+        .eq('tanggal_tugas', tanggalTugas)
+        .ilike('perayaan', perayaan)
+        .maybeSingle();
+
+      if (existing) {
+        eventId = existing.id;
+      } else {
+        // Buat event baru (historis, langsung published)
+        const { data: newEv, error: evErr } = await supabase.from('events').insert({
+          nama_event:      perayaan.toUpperCase(),
+          tipe_event:      'Mingguan',
+          tanggal_tugas:   tanggalTugas,
+          tanggal_latihan: tanggalLatihan,
+          perayaan:        perayaan,
+          warna_liturgi:   'Hijau',   // default, bisa diedit manual
+          jumlah_misa:     4,
+          status_event:    'Sudah_Lewat',
+          is_draft:        false,
+          gcatholic_fetched: false,
+        }).select('id').single();
+        if (evErr) throw new Error('Gagal buat event: ' + evErr.message);
+        eventId = newEv.id;
+      }
+      eventCache[cacheKey] = eventId;
+    }
+
+    // ── 5. Cari user ──────────────────────────────────────
+    const { data: user } = await supabase
+      .from('users').select('id').eq('nickname', nickname).maybeSingle();
+    if (!user) throw new Error(`User "${nickname}" tidak ditemukan — import Anggota dulu`);
+
+    // ── 6. Cek duplikat assignment ────────────────────────
+    const { data: existAsgn } = await supabase
+      .from('assignments')
+      .select('id')
+      .eq('event_id', eventId)
+      .eq('user_id', user.id)
+      .eq('slot_number', slotNumber)
+      .maybeSingle();
+    if (existAsgn) return; // skip duplikat
+
+    // ── 7. Insert assignment ──────────────────────────────
+    const { error: aErr } = await supabase.from('assignments').insert({
+      event_id:    eventId,
+      user_id:     user.id,
+      slot_number: slotNumber,
+      position:    1,  // posisi dalam slot (legacy data tidak tahu posisi)
+    });
+    if (aErr) throw new Error(aErr.message);
+  }
+
   function downloadErrors() {
     const csv = ['Row,Error,Data\n', ...errors.map(e => `${e.row},"${e.msg}","${(e.data||'').replace(/"/g,'""')}"\n`)].join('');
     const a = document.createElement('a');
@@ -413,7 +553,7 @@ export default function MigrationPage() {
           </div>
           <div className="card bg-amber-50 border-amber-100">
             <p className="text-xs font-semibold text-amber-800 mb-1">⚠️ Urutan Import</p>
-            {['1. Anggota','2. Registrasi','3. Absensi','4. Tukar Jadwal'].map((s,i) => (
+            {['1. Anggota','2. Registrasi','3. Jadwal Historis','4. Absensi','5. Tukar Jadwal'].map((s,i) => (
               <p key={i} className="text-xs text-amber-700">{s}</p>
             ))}
           </div>

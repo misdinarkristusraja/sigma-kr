@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -31,9 +31,22 @@ const NAV_ITEMS = [
 ];
 
 export default function Layout() {
-  const { profile, role, loading: authLoading, signOut } = useAuth();
+  const { profile, role, loading: authLoading, signOut, isAdmin } = useAuth();
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
+  const [open,        setOpen]       = useState(false);
+  const [migEnabled,  setMigEnabled] = useState(true); // default tampil
+
+  // Cek system_config: migration_enabled
+  // Admin bisa matikan via /admin → Config → migration_enabled = false
+  useEffect(() => {
+    supabase.from('system_config')
+      .select('value')
+      .eq('key', 'migration_enabled')
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data && data.value === 'false') setMigEnabled(false);
+      });
+  }, []);
 
   async function handleSignOut() {
     await signOut();
@@ -42,6 +55,8 @@ export default function Layout() {
   }
 
   function canSeeItem(item) {
+    // Sembunyikan Migrasi Data jika sudah dinonaktifkan via config
+    if (item.path === '/migrasi' && !migEnabled) return false;
     if (!item.roles) return true;
     if (!role) return true;
     return item.roles.includes(role);
