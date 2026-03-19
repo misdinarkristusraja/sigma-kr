@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { getLiturgiMinggu as getStaticLiturgi, getLiturgiByMonth, HARI_RAYA_NO_HARIAN } from '../lib/liturgiData2026';
 import { supabase } from '../lib/supabase';
 import { formatDate, getLiturgyClass } from '../lib/utils';
 import { toPng } from 'html-to-image';
@@ -46,106 +47,73 @@ function getWeekends(y, m) {
   return result;
 }
 
-// ─── Fetch & Parse gcatholic.org ───────────────────────────────────────────
-// Berdasarkan inspeksi HTML gcatholic:
-//   <tr id="0308">           ← id = MMDD
-//     <td align="right">8</td>
-//     <td align="center">Minggu</td>
-//     <td align="center"></td>
-//     <td>
-//       <p class="indent">
-//         <span class="feastv"></span>   ← warna: v=ungu r=merah w=putih g=hijau p=pink b=hitam
-//         <span class="feast1">Hari Minggu Prapaskah III</span>
-//       </p>
-//     </td>
-//   </tr>
-
-const COLOR_MAP = { v:'Ungu', r:'Merah', w:'Putih', g:'Hijau', p:'MerahMuda', b:'Hitam', n:'Hitam' };
-
-function parseLiturgiHTML(html, year) {
-  const results = [];
-
-  // Match <tr id="MMDD"> — format gcatholic yang sudah diketahui
-  const trRegex = /<tr[^>]*\sid="(\d{4})"[^>]*>([\s\S]*?)<\/tr>/gi;
-  let m;
-
-  while ((m = trRegex.exec(html)) !== null) {
-    const trId    = m[1];            // e.g. "0308"
-    const rowHtml = m[2];
-
-    const month = parseInt(trId.slice(0, 2), 10);
-    const day   = parseInt(trId.slice(2, 4), 10);
-    if (!month || !day) continue;
-
-    // Nama hari
-    const tdMatches = [...rowHtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
-    const dow = tdMatches[1]?.[1]?.replace(/<[^>]+>/g,'').trim() || '';
-    const isMinggu = /minggu/i.test(dow);
-    const isSabtu  = /sabtu/i.test(dow);
-
-    // Warna dari span class="feastX" (X = v/r/w/g/p/b/n)
-    const colorSpan = rowHtml.match(/<span\s+class="feast([a-z])[^"]*"\s*><\/span>/i);
-    const color = colorSpan ? (COLOR_MAP[colorSpan[1].toLowerCase()] || 'Hijau') : 'Hijau';
-
-    // Nama liturgi dari span class="feast1" atau "feast2"
-    const nameSpan = rowHtml.match(/<span\s+class="feast\d[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
-    if (!nameSpan) continue;
-    const name = nameSpan[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
-    if (!name || name.length < 3) continue;
-
-    results.push({
-      date:      `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`,
-      month, day, dow, name, color,
-      isMinggu, isSabtu,
-      isHariRaya: /hari raya|solemnity/i.test(name),
-    });
-  }
-  return results;
-}
-
-const liturgiCache = {};
+// ─── Sumber Data Liturgi ──────────────────────────────────────────────────
+// UTAMA: data statis dari Jadwal_2026.pdf (jadwal resmi paroki)
+// FALLBACK: gcatholic.org (jika tahun bukan 2026)
 
 async function fetchLiturgi(year, month) {
-  const key = `${year}-${month}`;
-  if (liturgiCache[key]?.length) return liturgiCache[key];
+  // Gunakan data statis untuk 2026 (sumber: Jadwal_2026.pdf)
+  if (year === 2026) {
+    const data = getLiturgiByMonth(year, month);
+    return data; // sudah dalam format {date, name, color, isMinggu, isHariRaya}
+  }
+  // Untuk tahun lain: coba gcatholic.org
+  return await fetchGcatholic(year, month);
+}
 
+// Fallback: fetch gcatholic (untuk tahun selain 2026)
+const gcatholicCache = {};
+async function fetchGcatholic(year, month) {
+  const key = `${year}-${month}`;
+  if (gcatholicCache[key]?.length) return gcatholicCache[key];
   const targetUrl = `https://gcatholic.org/calendar/${year}/ID-id`;
-  const proxies   = [
+  const proxies = [
     `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
     `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
   ];
-
   let html = '';
   for (const proxy of proxies) {
     try {
-      const res  = await fetch(proxy, { signal: AbortSignal.timeout(10000) });
+      const res = await fetch(proxy, { signal: AbortSignal.timeout(8000) });
       if (!res.ok) continue;
       const json = await res.json().catch(() => null);
       html = json?.contents || json?.body || '';
-      if (html.includes('feast1') || html.includes('feast2')) break;
+      if (html.includes('feast1')) break;
     } catch { continue; }
   }
-
-  if (!html || (!html.includes('feast1') && !html.includes('feast2'))) {
-    // Fallback: Supabase Edge Function
-    try {
-      const { data } = await supabase.functions.invoke('fetch-gcatholic', { body: { year, month } });
-      if (Array.isArray(data) && data.length > 0) {
-        liturgiCache[key] = data;
-        return data;
-      }
-    } catch {}
-    return [];
-  }
-
-  const parsed = parseLiturgiHTML(html, year);
-  liturgiCache[key] = parsed;
+  const parsed = html ? parseLiturgiHTML(html, year) : [];
+  gcatholicCache[key] = parsed;
   return parsed;
 }
 
-// Ambil nama MINGGU untuk event mingguan
-function getLiturgiMinggu(data, sundayDate) {
-  return data.find(l => l.date === sundayDate && l.isMinggu) || null;
+// Parser gcatholic HTML (untuk tahun non-2026)
+const COLOR_MAP = { v:'Ungu', r:'Merah', w:'Putih', g:'Hijau', p:'MerahMuda', b:'Hitam' };
+function parseLiturgiHTML(html, year) {
+  const results = [];
+  const trRegex = /<tr[^>]*\sid="(\d{4})"[^>]*>([\s\S]*?)<\/tr>/gi;
+  let m;
+  while ((m = trRegex.exec(html)) !== null) {
+    const month = parseInt(m[1].slice(0,2),10);
+    const day   = parseInt(m[1].slice(2,4),10);
+    if (!month||!day) continue;
+    const row = m[2];
+    const tds = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
+    const dow = tds[1]?.[1]?.replace(/<[^>]+>/g,'').trim()||'';
+    const colorSpan = row.match(/<span\s+class="feast([a-z])"\s*>/i);
+    const color = colorSpan ? (COLOR_MAP[colorSpan[1]]||'Hijau') : 'Hijau';
+    const nameSpan = row.match(/<span\s+class="feast\d[^"]*">([\s\S]*?)<\/span>/i);
+    if (!nameSpan) continue;
+    const name = nameSpan[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+    if (name.length < 3) continue;
+    results.push({
+      date: `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`,
+      name, color,
+      isMinggu: /minggu/i.test(dow),
+      isSabtu:  /sabtu/i.test(dow),
+      isHariRaya: /hari raya/i.test(name),
+    });
+  }
+  return results;
 }
 
 // ─── Export PNG template (format tabel seperti contoh) ─────────────────────
@@ -297,12 +265,11 @@ export default function ScheduleWeeklyPage() {
       toast.loading('Mengambil kalender liturgi gcatholic.org...', { id: tid });
       const liturgyData = await fetchLiturgi(year, month);
 
-      if (liturgyData.length === 0) {
-        toast.loading('⚠️ gcatholic tidak tersedia — nama akan diisi manual', { id: tid });
+      if (year === 2026) {
+        toast.loading(`✅ Data liturgi dari jadwal paroki (${liturgyData.length} entri). Menghitung...`, { id: tid });
+      } else if (liturgyData.length === 0) {
+        toast.loading('⚠️ Data liturgi tidak tersedia — nama diisi manual', { id: tid });
       } else {
-        // Log untuk debug: tunjukkan beberapa entry yang berhasil di-parse
-        const minggus = liturgyData.filter(l => l.isMinggu);
-        console.log('[gcatholic] parsed:', liturgyData.length, 'entries,', minggus.length, 'Minggu');
         toast.loading(`✅ ${liturgyData.length} entri liturgi. Menghitung jadwal...`, { id: tid });
       }
 
@@ -333,7 +300,10 @@ export default function ScheduleWeeklyPage() {
 
       for (const wk of weekends) {
         // Ambil nama dari hari MINGGU di gcatholic
-        const liturgiMinggu = getLiturgiMinggu(liturgyData, wk.sunday);
+        // Gunakan data statis 2026 (prioritas), fallback ke liturgyData dari fetch
+        const liturgiMinggu = (year === 2026)
+          ? getStaticLiturgi(wk.sunday)
+          : (liturgyData.find(l => l.date === wk.sunday && l.isMinggu) || null);
         const eventName     = liturgiMinggu?.name  || 'Misa Mingguan';
         const warnaLiturgi  = liturgiMinggu?.color || 'Hijau';
 
