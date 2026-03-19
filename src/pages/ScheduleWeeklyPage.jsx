@@ -217,14 +217,21 @@ export default function ScheduleWeeklyPage() {
   const [picOptions, setPicOptions] = useState([]);
   const exportRef    = useRef(null);
   const [showAddMisa, setShowAddMisa] = useState(false);
-  const [addMisaForm, setAddMisaForm] = useState({
-    tipe:            'Misa_Khusus',    // 'Misa_Khusus' | 'Mingguan_HariRaya'
+  const INIT_MISA_FORM = {
+    tipe:            'Misa_Khusus',  // 'Misa_Khusus' | 'Mingguan_HariRaya'
     tanggal_tugas:   '',
     tanggal_latihan: '',
     perayaan:        '',
     warna_liturgi:   'Putih',
     jumlah_misa:     1,
-  });
+    // Jam per slot (bisa lebih dari 1 untuk Misa_Khusus)
+    slot_times:      ['07.00'],      // array jam string sesuai jumlah slot
+    // Misa Vigili: misa malam sebelumnya
+    ada_vigili:      false,
+    vigili_jam:      '17.30',        // jam misa vigili (default sore)
+    // tanggal_tugas adalah hari utama, vigili = tanggal_tugas - 1 hari
+  };
+  const [addMisaForm, setAddMisaForm] = useState({...INIT_MISA_FORM});
 
   // ── Load events ────────────────────────────────────────────
   const loadEvents = useCallback(async () => {
@@ -381,14 +388,21 @@ export default function ScheduleWeeklyPage() {
       toast.error('Tanggal dan nama perayaan wajib diisi'); return;
     }
 
-    // Tipe:
-    // 'Misa_Khusus'       = Hari Raya stand-alone (tidak ada latihan mingguan)
-    // 'Mingguan_HariRaya' = Hari Raya yang menggantikan/ditambah ke weekend biasa
-    //                       (ada latihan Sabtu, ada slot Minggu juga)
     const isMingguanHariRaya = f.tipe === 'Mingguan_HariRaya';
 
+    // Susun nama event dengan jam jika ada
+    const jamStr = !isMingguanHariRaya && f.slot_times?.length
+      ? ` (${f.slot_times.filter(Boolean).join(', ')})`
+      : '';
+
+    // Untuk Misa_Khusus: draft_note berisi info jam tiap slot
+    const draftNote = !isMingguanHariRaya && f.slot_times?.length
+      ? `Jam: ${f.slot_times.map((j,i) => `Slot ${i+1}: ${j}`).join(' | ')}`
+      : '';
+
+    // Insert event utama
     const { data: ev, error } = await supabase.from('events').insert({
-      nama_event:        f.perayaan.toUpperCase(),
+      nama_event:        (f.perayaan + jamStr).toUpperCase(),
       tipe_event:        isMingguanHariRaya ? 'Mingguan' : 'Misa_Khusus',
       tanggal_tugas:     f.tanggal_tugas,
       tanggal_latihan:   isMingguanHariRaya ? f.tanggal_latihan : null,
@@ -398,13 +412,37 @@ export default function ScheduleWeeklyPage() {
       status_event:      'Akan_Datang',
       is_draft:          true,
       gcatholic_fetched: false,
+      draft_note:        draftNote || null,
     }).select().single();
 
     if (error) { toast.error('Gagal tambah: ' + error.message); return; }
 
-    toast.success(`"${f.perayaan}" berhasil ditambahkan sebagai DRAFT!`);
+    // Jika ada Misa Vigili: buat event terpisah untuk H-1
+    if (!isMingguanHariRaya && f.ada_vigili && f.vigili_jam) {
+      // Hitung tanggal vigili = tanggal_tugas - 1 hari
+      const [vy, vm, vd] = f.tanggal_tugas.split('-').map(Number);
+      const vigiliDate   = new Date(vy, vm - 1, vd - 1);
+      const vigiliStr    = `${vigiliDate.getFullYear()}-${String(vigiliDate.getMonth()+1).padStart(2,'0')}-${String(vigiliDate.getDate()).padStart(2,'0')}`;
+
+      await supabase.from('events').insert({
+        nama_event:        `MISA VIGILI — ${f.perayaan.toUpperCase()} (${f.vigili_jam})`,
+        tipe_event:        'Misa_Khusus',
+        tanggal_tugas:     vigiliStr,
+        tanggal_latihan:   null,
+        perayaan:          `Misa Vigili — ${f.perayaan}`,
+        warna_liturgi:     f.warna_liturgi,
+        jumlah_misa:       1,
+        status_event:      'Akan_Datang',
+        is_draft:          true,
+        gcatholic_fetched: false,
+        draft_note:        `Vigili H-1. Jam: ${f.vigili_jam}`,
+      });
+    }
+
+    const vigiliInfo = (!isMingguanHariRaya && f.ada_vigili) ? ' + Misa Vigili H-1' : '';
+    toast.success(`"${f.perayaan}"${vigiliInfo} berhasil ditambahkan sebagai DRAFT!`);
     setShowAddMisa(false);
-    setAddMisaForm({ tipe:'Misa_Khusus', tanggal_tugas:'', tanggal_latihan:'', perayaan:'', warna_liturgi:'Putih', jumlah_misa:1 });
+    setAddMisaForm({...INIT_MISA_FORM});
     loadEvents();
   }
 
@@ -799,16 +837,19 @@ export default function ScheduleWeeklyPage() {
             </div>
 
             <div className="space-y-3">
+              {/* Nama perayaan */}
               <div>
                 <label className="label">Nama Perayaan *</label>
                 <input className="input" value={addMisaForm.perayaan}
-                  placeholder="Contoh: HR. Santa Maria Bunda Allah"
+                  placeholder="Contoh: HR. Kenaikan Tuhan"
                   onChange={e=>setAddMisaForm(f=>({...f,perayaan:e.target.value}))} />
               </div>
+
+              {/* Tanggal */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="label">
-                    {addMisaForm.tipe==='Mingguan_HariRaya' ? 'Tanggal Misa (Minggu) *' : 'Tanggal Misa *'}
+                    {addMisaForm.tipe==='Mingguan_HariRaya' ? 'Tanggal Misa (Minggu) *' : 'Tanggal Hari Raya *'}
                   </label>
                   <input type="date" className="input" value={addMisaForm.tanggal_tugas}
                     onChange={e=>setAddMisaForm(f=>({...f,tanggal_tugas:e.target.value}))} />
@@ -822,14 +863,49 @@ export default function ScheduleWeeklyPage() {
                 )}
                 {addMisaForm.tipe==='Misa_Khusus' && (
                   <div>
-                    <label className="label">Jumlah Slot Misa</label>
+                    <label className="label">Jumlah Slot / Misa</label>
                     <select className="input" value={addMisaForm.jumlah_misa}
-                      onChange={e=>setAddMisaForm(f=>({...f,jumlah_misa:Number(e.target.value)}))}>
-                      {[1,2,3,4].map(n=><option key={n} value={n}>{n} slot</option>)}
+                      onChange={e=>{
+                        const n = Number(e.target.value);
+                        setAddMisaForm(f=>({
+                          ...f,
+                          jumlah_misa: n,
+                          slot_times: Array.from({length:n}, (_,i) => f.slot_times[i] || '07.00'),
+                        }));
+                      }}>
+                      {[1,2,3,4].map(n=><option key={n} value={n}>{n} misa</option>)}
                     </select>
                   </div>
                 )}
               </div>
+
+              {/* Jam per slot — hanya Misa_Khusus */}
+              {addMisaForm.tipe==='Misa_Khusus' && (
+                <div>
+                  <label className="label">Jam Misa</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {addMisaForm.slot_times.map((jam, idx) => (
+                      <div key={idx} className="flex items-center gap-1.5">
+                        <span className="text-xs text-gray-500 w-12">Misa {idx+1}:</span>
+                        <input
+                          type="text"
+                          className="input w-24 text-sm"
+                          value={jam}
+                          placeholder="07.00"
+                          onChange={e => {
+                            const next = [...addMisaForm.slot_times];
+                            next[idx] = e.target.value;
+                            setAddMisaForm(f=>({...f, slot_times: next}));
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">Format: 07.00, 17.30, dll.</p>
+                </div>
+              )}
+
+              {/* Warna liturgi */}
               <div>
                 <label className="label">Warna Liturgi</label>
                 <select className="input" value={addMisaForm.warna_liturgi}
@@ -837,9 +913,69 @@ export default function ScheduleWeeklyPage() {
                   {WARNA_OPTIONS.map(w=><option key={w}>{w}</option>)}
                 </select>
               </div>
+
+              {/* Misa Vigili — hanya Misa_Khusus */}
+              {addMisaForm.tipe==='Misa_Khusus' && (
+                <div className={`p-3 rounded-xl border-2 transition-all ${addMisaForm.ada_vigili ? 'border-brand-800 bg-brand-50' : 'border-gray-200 bg-gray-50'}`}>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={addMisaForm.ada_vigili}
+                      onChange={e=>setAddMisaForm(f=>({...f, ada_vigili:e.target.checked}))}
+                      className="w-4 h-4 accent-brand-800"
+                    />
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">Ada Misa Vigili (H-1)</p>
+                      <p className="text-xs text-gray-500">
+                        Misa sore/malam di hari sebelum hari raya.
+                        Contoh: HR. Kenaikan Tuhan (Kamis) → Vigili Rabu sore.
+                      </p>
+                    </div>
+                  </label>
+
+                  {addMisaForm.ada_vigili && (
+                    <div className="mt-3 flex items-center gap-3">
+                      <span className="text-xs text-gray-600 w-32 flex-shrink-0">
+                        Jam Vigili ({addMisaForm.tanggal_tugas
+                          ? (() => {
+                              const [y,m,d] = addMisaForm.tanggal_tugas.split('-').map(Number);
+                              const vd = new Date(y,m-1,d-1);
+                              return ['Min','Sen','Sel','Rab','Kam','Jum','Sab'][vd.getDay()] + ', ' +
+                                vd.getDate() + ' ' + ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'][vd.getMonth()];
+                            })()
+                          : 'H-1'
+                        }):
+                      </span>
+                      <input
+                        type="text"
+                        className="input w-24 text-sm"
+                        value={addMisaForm.vigili_jam}
+                        placeholder="17.30"
+                        onChange={e=>setAddMisaForm(f=>({...f, vigili_jam:e.target.value}))}
+                      />
+                      <p className="text-xs text-gray-400">Format: 17.30</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
-            <div className="flex gap-2 mt-5">
+            {/* Preview ringkasan */}
+            {addMisaForm.perayaan && addMisaForm.tanggal_tugas && (
+              <div className="mt-4 p-3 bg-gray-50 rounded-xl text-xs text-gray-600 space-y-1">
+                <p className="font-semibold text-gray-800">Preview:</p>
+                {addMisaForm.ada_vigili && addMisaForm.tipe==='Misa_Khusus' && (() => {
+                  const [y,m,d] = addMisaForm.tanggal_tugas.split('-').map(Number);
+                  const vd = new Date(y,m-1,d-1);
+                  return (
+                    <p>📌 Vigili: {vd.getDate()}/{vd.getMonth()+1} pukul {addMisaForm.vigili_jam} WIB</p>
+                  );
+                })()}
+                <p>⛪ {addMisaForm.perayaan}: {addMisaForm.tanggal_tugas.split('-').reverse().join('/')} pukul {addMisaForm.slot_times?.join(', ')} WIB</p>
+              </div>
+            )}
+
+            <div className="flex gap-2 mt-4">
               <button onClick={addMisaKhusus} className="btn-primary flex-1 gap-2">
                 <Check size={16}/> Tambahkan sebagai Draft
               </button>
