@@ -5,24 +5,30 @@ import Layout from './components/layout/Layout';
 import LoadingScreen from './components/ui/LoadingScreen';
 import ErrorBoundary from './components/ui/ErrorBoundary';
 
-const LoginPage         = lazy(() => import('./pages/LoginPage'));
-const RegisterPage      = lazy(() => import('./pages/RegisterPage'));
-const DashboardPage     = lazy(() => import('./pages/DashboardPage'));
-const MembersPage       = lazy(() => import('./pages/MembersPage'));
-const MemberDetailPage  = lazy(() => import('./pages/MemberDetailPage'));
-const ScheduleWeekly    = lazy(() => import('./pages/ScheduleWeeklyPage'));
-const ScheduleDaily     = lazy(() => import('./pages/ScheduleDailyPage'));
-const ScanPage          = lazy(() => import('./pages/ScanPage'));
-const ScanRecordsPage   = lazy(() => import('./pages/ScanRecordsPage'));
-const SwapPage          = lazy(() => import('./pages/SwapPage'));
-const RecapPage         = lazy(() => import('./pages/RecapPage'));
-const LeaderboardPage   = lazy(() => import('./pages/LeaderboardPage'));
-const CardsPage         = lazy(() => import('./pages/CardsPage'));
-const MigrationPage     = lazy(() => import('./pages/MigrationPage'));
-const AdminPage         = lazy(() => import('./pages/AdminPage'));
-const ReregistrationPage= lazy(() => import('./pages/ReregistrationPage'));
-const PublicSchedule    = lazy(() => import('./pages/ScheduleDailyPage').then(m => ({ default: m.PublicSchedulePage })));
-const NotFound          = lazy(() => import('./pages/ScheduleDailyPage').then(m => ({ default: m.NotFoundPage })));
+const LoginPage          = lazy(() => import('./pages/LoginPage'));
+const RegisterPage       = lazy(() => import('./pages/RegisterPage'));
+const DashboardPage      = lazy(() => import('./pages/DashboardPage'));
+const MembersPage        = lazy(() => import('./pages/MembersPage'));
+const MemberDetailPage   = lazy(() => import('./pages/MemberDetailPage'));
+const ScheduleWeekly     = lazy(() => import('./pages/ScheduleWeeklyPage'));
+const ScheduleDaily      = lazy(() => import('./pages/ScheduleDailyPage'));
+const ScanPage           = lazy(() => import('./pages/ScanPage'));
+const ScanRecordsPage    = lazy(() => import('./pages/ScanRecordsPage'));
+const SwapPage           = lazy(() => import('./pages/SwapPage'));
+const RecapPage          = lazy(() => import('./pages/RecapPage'));
+const LeaderboardPage    = lazy(() => import('./pages/LeaderboardPage'));
+const CardsPage          = lazy(() => import('./pages/CardsPage'));
+const MigrationPage      = lazy(() => import('./pages/MigrationPage'));
+const AdminPage          = lazy(() => import('./pages/AdminPage'));
+const ReregistrationPage = lazy(() => import('./pages/ReregistrationPage'));
+const StatistikPage      = lazy(() => import('./pages/StatistikPage'));
+const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
+const PublicSchedule     = lazy(() => import('./pages/ScheduleDailyPage').then(m => ({ default: m.PublicSchedulePage })));
+const NotFound           = lazy(() => import('./pages/ScheduleDailyPage').then(m => ({ default: m.NotFoundPage })));
+
+const ADMIN = ['Administrator'];
+const PENG  = ['Administrator', 'Pengurus'];
+const STAFF = ['Administrator', 'Pengurus', 'Pelatih'];
 
 function ProtectedRoute({ children, roles }) {
   const { user, profile, loading } = useAuth();
@@ -34,41 +40,52 @@ function ProtectedRoute({ children, roles }) {
 }
 
 function AppRoutes() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
   if (loading) return <LoadingScreen/>;
 
-  const ADMIN = ['Administrator'];
-  const PENG  = ['Administrator', 'Pengurus'];
-  const STAFF = ['Administrator', 'Pengurus', 'Pelatih'];
+  // Force change password jika flag aktif
+  // Redirect ke /ganti-password kecuali jika sudah di sana atau di login
+  const path = window.location.pathname;
+  if (user && profile?.must_change_password &&
+      path !== '/ganti-password' && path !== '/login') {
+    return <Navigate to="/ganti-password" replace/>;
+  }
 
   return (
-    <Suspense fallback={<LoadingScreen/>}>
-      <Routes>
-        <Route path="/login"  element={user ? <Navigate to="/dashboard"/> : <LoginPage/>}/>
-        <Route path="/daftar" element={<RegisterPage/>}/>
-        <Route path="/jadwal" element={<PublicSchedule/>}/>
+    <ErrorBoundary>
+      <Suspense fallback={<LoadingScreen/>}>
+        <Routes>
+          {/* Public */}
+          <Route path="/login"           element={user ? <Navigate to="/dashboard"/> : <LoginPage/>}/>
+          <Route path="/daftar"          element={<RegisterPage/>}/>
+          <Route path="/jadwal"          element={<PublicSchedule/>}/>
+          {/* Ganti password — butuh user login tapi tidak butuh Layout */}
+          <Route path="/ganti-password"  element={user ? <ChangePasswordPage/> : <Navigate to="/login"/>}/>
 
-        <Route element={<ProtectedRoute><Layout/></ProtectedRoute>}>
-          <Route index element={<Navigate to="/dashboard"/>}/>
-          <Route path="/dashboard"       element={<ErrorBoundary><DashboardPage/></ErrorBoundary>}/>
-          <Route path="/anggota"         element={<ProtectedRoute roles={STAFF}><ErrorBoundary><MembersPage/></ErrorBoundary></ProtectedRoute>}/>
-          <Route path="/anggota/:id"     element={<ErrorBoundary><MemberDetailPage/></ErrorBoundary>}/>
-          <Route path="/jadwal-mingguan" element={<ProtectedRoute roles={PENG}><ErrorBoundary><ScheduleWeekly/></ErrorBoundary></ProtectedRoute>}/>
-          <Route path="/jadwal-harian"   element={<ErrorBoundary><ScheduleDaily/></ErrorBoundary>}/>
-          <Route path="/scan-qr"         element={<ProtectedRoute roles={STAFF}><ErrorBoundary><ScanPage/></ErrorBoundary></ProtectedRoute>}/>
-          <Route path="/riwayat-scan"    element={<ProtectedRoute roles={STAFF}><ErrorBoundary><ScanRecordsPage/></ErrorBoundary></ProtectedRoute>}/>
-          <Route path="/tukar-jadwal"    element={<ErrorBoundary><SwapPage/></ErrorBoundary>}/>
-          <Route path="/rekap"           element={<ErrorBoundary><RecapPage/></ErrorBoundary>}/>
-          <Route path="/leaderboard"     element={<ErrorBoundary><LeaderboardPage/></ErrorBoundary>}/>
-          <Route path="/kartu"           element={<ErrorBoundary><CardsPage/></ErrorBoundary>}/>
-          <Route path="/daftar-ulang"    element={<ErrorBoundary><ReregistrationPage/></ErrorBoundary>}/>
-          <Route path="/migrasi"         element={<ProtectedRoute roles={ADMIN}><ErrorBoundary><MigrationPage/></ErrorBoundary></ProtectedRoute>}/>
-          <Route path="/admin"           element={<ProtectedRoute roles={ADMIN}><ErrorBoundary><AdminPage/></ErrorBoundary></ProtectedRoute>}/>
-        </Route>
+          {/* Protected + Layout */}
+          <Route element={<ProtectedRoute><Layout/></ProtectedRoute>}>
+            <Route index                  element={<Navigate to="/dashboard"/>}/>
+            <Route path="/dashboard"      element={<ErrorBoundary><DashboardPage/></ErrorBoundary>}/>
+            <Route path="/anggota"        element={<ProtectedRoute roles={STAFF}><ErrorBoundary><MembersPage/></ErrorBoundary></ProtectedRoute>}/>
+            <Route path="/anggota/:id"    element={<ErrorBoundary><MemberDetailPage/></ErrorBoundary>}/>
+            <Route path="/jadwal-mingguan" element={<ProtectedRoute roles={PENG}><ErrorBoundary><ScheduleWeekly/></ErrorBoundary></ProtectedRoute>}/>
+            <Route path="/jadwal-harian"  element={<ErrorBoundary><ScheduleDaily/></ErrorBoundary>}/>
+            <Route path="/scan-qr"        element={<ProtectedRoute roles={STAFF}><ErrorBoundary><ScanPage/></ErrorBoundary></ProtectedRoute>}/>
+            <Route path="/riwayat-scan"   element={<ProtectedRoute roles={STAFF}><ErrorBoundary><ScanRecordsPage/></ErrorBoundary></ProtectedRoute>}/>
+            <Route path="/tukar-jadwal"   element={<ErrorBoundary><SwapPage/></ErrorBoundary>}/>
+            <Route path="/rekap"          element={<ErrorBoundary><RecapPage/></ErrorBoundary>}/>
+            <Route path="/leaderboard"    element={<ErrorBoundary><LeaderboardPage/></ErrorBoundary>}/>
+            <Route path="/kartu"          element={<ErrorBoundary><CardsPage/></ErrorBoundary>}/>
+            <Route path="/daftar-ulang"   element={<ErrorBoundary><ReregistrationPage/></ErrorBoundary>}/>
+            <Route path="/statistik"      element={<ProtectedRoute roles={PENG}><ErrorBoundary><StatistikPage/></ErrorBoundary></ProtectedRoute>}/>
+            <Route path="/migrasi"        element={<ProtectedRoute roles={ADMIN}><ErrorBoundary><MigrationPage/></ErrorBoundary></ProtectedRoute>}/>
+            <Route path="/admin"          element={<ProtectedRoute roles={ADMIN}><ErrorBoundary><AdminPage/></ErrorBoundary></ProtectedRoute>}/>
+          </Route>
 
-        <Route path="*" element={<NotFound/>}/>
-      </Routes>
-    </Suspense>
+          <Route path="*" element={<NotFound/>}/>
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 
