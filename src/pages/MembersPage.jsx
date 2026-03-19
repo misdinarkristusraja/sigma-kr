@@ -4,99 +4,132 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { truncate, ROLE_LABELS, STATUS_LABELS, formatDate, buildWALink, generateMyID } from '../lib/utils';
 import {
-  Search, Filter, UserPlus, CheckCircle, XCircle, Eye,
-  Phone, School, ChevronDown, Download, RefreshCw, Shield
+  Search, UserPlus, CheckCircle, XCircle, Eye,
+  Download, RefreshCw, AlertTriangle, Users
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const TABS = [
-  { key: 'active',   label: 'Aktif' },
-  { key: 'pending',  label: 'Menunggu' },
-  { key: 'retired',  label: 'Alumni' },
-  { key: 'all',      label: 'Semua' },
+  { key: 'all',     label: 'Semua' },      // ← default ke Semua dulu
+  { key: 'active',  label: 'Aktif' },
+  { key: 'pending', label: 'Menunggu' },
+  { key: 'retired', label: 'Alumni' },
 ];
 
 export default function MembersPage() {
   const { isPengurus, isAdmin } = useAuth();
-  const [tab,     setTab]     = useState('active');
-  const [members, setMembers] = useState([]);
-  const [regs,    setRegs]    = useState([]);   // pending registrations
-  const [search,  setSearch]  = useState('');
-  const [loading, setLoading] = useState(true);
-  const [filter,  setFilter]  = useState({ pendidikan: '', lingkungan: '' });
+  const [tab,      setTab]     = useState('all');   // default Semua
+  const [members,  setMembers] = useState([]);
+  const [regs,     setRegs]    = useState([]);
+  const [search,   setSearch]  = useState('');
+  const [loading,  setLoading] = useState(true);
+  const [error,    setError]   = useState('');
+  const [total,    setTotal]   = useState(0);
+  const [filter,   setFilter]  = useState({ pendidikan: '' });
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    if (tab === 'pending') {
-      const { data } = await supabase
-        .from('registrations')
-        .select('*')
-        .eq('status', 'Pending')
-        .order('created_at', { ascending: false });
-      setRegs(data || []);
-    } else {
-      let q = supabase.from('users').select('*').order('nama_panggilan');
-      if (tab === 'active')  q = q.eq('status', 'Active');
-      if (tab === 'retired') q = q.in('status', ['Retired']);
-      if (filter.pendidikan) q = q.eq('pendidikan', filter.pendidikan);
-      if (filter.lingkungan) q = q.eq('lingkungan', filter.lingkungan);
-      const { data } = await q;
-      setMembers(data || []);
+    setError('');
+
+    try {
+      if (tab === 'pending') {
+        // Load pending registrations
+        const { data, error: e } = await supabase
+          .from('registrations')
+          .select('*')
+          .eq('status', 'Pending')
+          .order('created_at', { ascending: false });
+
+        if (e) throw e;
+        setRegs(data || []);
+        setMembers([]);
+      } else {
+        // Load users — query tanpa filter status dulu untuk tab 'all'
+        let q = supabase
+          .from('users')
+          .select('id, nickname, myid, nama_lengkap, nama_panggilan, pendidikan, sekolah, lingkungan, wilayah, role, status, is_tarakanita, is_suspended, created_at', { count: 'exact' })
+          .order('nama_panggilan', { nullsFirst: false })
+          .order('nickname');  // fallback sort jika nama_panggilan null
+
+        // Filter per tab
+        if (tab === 'active')  q = q.eq('status', 'Active');
+        if (tab === 'retired') q = q.in('status', ['Retired', 'Misdinar_Retired']);
+
+        // Filter tambahan
+        if (filter.pendidikan) q = q.eq('pendidikan', filter.pendidikan);
+
+        const { data, error: e, count } = await q;
+
+        if (e) throw e;
+        setMembers(data || []);
+        setTotal(count || 0);
+        setRegs([]);
+      }
+    } catch (err) {
+      console.error('loadData error:', err);
+      setError(err.message || 'Gagal memuat data');
+      toast.error('Gagal memuat anggota: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [tab, filter]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const filtered = members.filter(m =>
-    !search || [m.nama_panggilan, m.nickname, m.nama_lengkap, m.lingkungan, m.sekolah]
-      .some(v => v?.toLowerCase().includes(search.toLowerCase()))
-  );
+  // Filter client-side berdasarkan search
+  const filtered = members.filter(m => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return [m.nama_panggilan, m.nickname, m.nama_lengkap, m.lingkungan, m.sekolah, m.myid]
+      .some(v => v?.toLowerCase().includes(q));
+  });
 
+  // ── Approve Registrasi ──────────────────────────────────────
   async function approveRegistration(reg) {
     try {
-      // 1. Generate MyID
-      const myid = await generateMyID(reg.nickname, reg.tanggal_lahir);
+      const myid = await generateMyID(reg.nickname, reg.tanggal_lahir || '2000-01-01');
+      const tempEmail = reg.email || `${reg.nickname}@sigma.krsoba.id`;
+      const tempPass  = `sigma${myid.slice(0,6)}`;
 
-      // 2. Create Supabase Auth user
+      // Buat auth user
       const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
-        email:    reg.email || `${reg.nickname}@sigma.krsoba.id`,
-        password: `sigma${myid.slice(0,6)}`, // temp password
-        email_confirm: true,
+        email: tempEmail, password: tempPass, email_confirm: true,
       });
       if (authErr) throw authErr;
 
-      // 3. Insert into users table
+      // Insert ke users
       const { error: dbErr } = await supabase.from('users').insert({
-        id:               authData.user.id,
-        nickname:         reg.nickname,
+        id:             authData.user.id,
+        nickname:       reg.nickname,
         myid,
-        nama_lengkap:     reg.nama_lengkap,
-        nama_panggilan:   reg.nickname,
-        tanggal_lahir:    reg.tanggal_lahir,
-        pendidikan:       reg.pendidikan,
-        sekolah:          reg.sekolah,
-        is_tarakanita:    reg.is_tarakanita,
-        wilayah:          reg.wilayah,
-        lingkungan:       reg.lingkungan,
-        email:            authData.user.email,
-        hp_anak:          reg.hp_anak,
-        hp_ortu:          reg.hp_ortu,
-        nama_ayah:        reg.nama_ayah,
-        nama_ibu:         reg.nama_ibu,
-        alamat:           reg.alamat,
-        alasan_masuk:     reg.alasan_masuk,
-        sampai_kapan:     reg.sampai_kapan,
+        nama_lengkap:   reg.nama_lengkap,
+        nama_panggilan: reg.nickname,
+        tanggal_lahir:  reg.tanggal_lahir,
+        pendidikan:     reg.pendidikan,
+        sekolah:        reg.sekolah,
+        is_tarakanita:  reg.is_tarakanita || false,
+        wilayah:        reg.wilayah,
+        lingkungan:     reg.lingkungan || '',
+        email:          tempEmail,
+        hp_anak:        reg.hp_anak,
+        hp_ortu:        reg.hp_ortu,
+        nama_ayah:      reg.nama_ayah,
+        nama_ibu:       reg.nama_ibu,
+        alamat:         reg.alamat,
+        alasan_masuk:   reg.alasan_masuk,
+        sampai_kapan:   reg.sampai_kapan,
         surat_pernyataan_url: reg.surat_pernyataan_url,
-        role:             'Misdinar_Aktif',
-        status:           'Active',
+        role:   'Misdinar_Aktif',
+        status: 'Active',
       });
       if (dbErr) throw dbErr;
 
-      // 4. Update registration status
-      await supabase.from('registrations').update({ status: 'Approved', approved_at: new Date().toISOString() }).eq('id', reg.id);
+      // Update status registrasi
+      await supabase.from('registrations')
+        .update({ status: 'Approved', approved_at: new Date().toISOString() })
+        .eq('id', reg.id);
 
-      toast.success(`${reg.nickname} disetujui! MyID: ${myid}`);
+      toast.success(`✅ ${reg.nickname} disetujui! MyID: ${myid} | Password sementara: ${tempPass}`);
       loadData();
     } catch (err) {
       toast.error('Gagal approve: ' + err.message);
@@ -110,38 +143,68 @@ export default function MembersPage() {
     loadData();
   }
 
+  // Export CSV
+  function exportCSV() {
+    const rows = filtered.map(m => [
+      m.nickname, m.nama_lengkap, m.nama_panggilan, m.pendidikan,
+      m.sekolah, m.lingkungan, m.wilayah, m.myid, m.role, m.status
+    ]);
+    const header = ['Nickname','Nama Lengkap','Nama Panggilan','Pendidikan','Sekolah','Lingkungan','Wilayah','MyID','Role','Status'];
+    const csv = [header, ...rows].map(r => r.map(v => `"${v||''}"`).join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['\uFEFF'+csv], {type:'text/csv'}));
+    a.download = `anggota-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+  }
+
+  const pendingCount = tab === 'pending' ? regs.length : 0;
+
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="page-title">Manajemen Anggota</h1>
-          <p className="page-subtitle">{members.length} anggota terdaftar</p>
+          <p className="page-subtitle">
+            {tab === 'all' ? `${total} total anggota` : `${filtered.length} anggota`}
+          </p>
         </div>
-        {isPengurus && (
-          <Link to="/anggota/tambah" className="btn-primary">
-            <UserPlus size={16} /> Tambah Manual
-          </Link>
-        )}
+        <div className="flex gap-2">
+          <button onClick={exportCSV} disabled={filtered.length === 0}
+            className="btn-outline gap-2 btn-sm">
+            <Download size={14} /> Export CSV
+          </button>
+          <button onClick={loadData} className="btn-ghost p-2" title="Refresh">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit flex-wrap">
         {TABS.map(t => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
+          <button key={t.key} onClick={() => setTab(t.key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
               tab === t.key ? 'bg-white text-brand-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
+            }`}>
             {t.label}
             {t.key === 'pending' && regs.length > 0 && (
-              <span className="ml-1.5 bg-red-500 text-white text-[10px] rounded-full px-1.5 py-0.5">{regs.length}</span>
+              <span className="ml-1.5 bg-red-500 text-white text-[10px] rounded-full px-1.5 py-0.5">
+                {regs.length}
+              </span>
             )}
           </button>
         ))}
       </div>
+
+      {/* Error banner */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-center gap-2">
+          <AlertTriangle size={16} className="text-red-500" />
+          <p className="text-sm text-red-700">{error}</p>
+          <button onClick={loadData} className="ml-auto text-xs text-red-600 underline">Coba lagi</button>
+        </div>
+      )}
 
       {/* Pending registrations */}
       {tab === 'pending' && (
@@ -149,35 +212,38 @@ export default function MembersPage() {
           {loading ? (
             <div className="skeleton h-24 rounded-xl" />
           ) : regs.length === 0 ? (
-            <div className="card text-center py-10 text-gray-400">Tidak ada pendaftaran baru</div>
+            <div className="card text-center py-10">
+              <CheckCircle size={40} className="mx-auto text-gray-300 mb-2" />
+              <p className="text-gray-400">Tidak ada pendaftaran baru</p>
+            </div>
           ) : regs.map(reg => (
             <div key={reg.id} className="card border-l-4 border-yellow-400">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
                     <span className="font-bold text-gray-900">{reg.nama_lengkap}</span>
-                    <span className="badge-yellow text-xs">Pending</span>
-                    {reg.is_tarakanita && <span className="badge-blue text-xs">Tarakanita</span>}
+                    <span className="badge-yellow">Pending</span>
+                    {reg.is_tarakanita && <span className="badge-blue">Tarakanita</span>}
                   </div>
                   <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-500">
                     <span>@{reg.nickname}</span>
                     <span>📚 {reg.pendidikan} · {reg.sekolah}</span>
                     <span>⛪ {reg.lingkungan}</span>
                     <span>📅 {formatDate(reg.tanggal_lahir, 'dd MMM yyyy')}</span>
-                    <span>📞 {reg.hp_ortu}</span>
-                    <span>💬 {reg.alasan_masuk ? truncate(reg.alasan_masuk, 40) : '—'}</span>
+                    {isPengurus && <span>📞 {reg.hp_ortu}</span>}
+                    {reg.alasan_masuk && <span className="col-span-2">💬 {truncate(reg.alasan_masuk, 50)}</span>}
                   </div>
                 </div>
                 {isPengurus && (
-                  <div className="flex gap-2 flex-shrink-0">
-                    <button
-                      onClick={() => approveRegistration(reg)}
-                      className="btn-primary btn-sm flex items-center gap-1"
-                    ><CheckCircle size={14} /> Setuju</button>
-                    <button
-                      onClick={() => rejectRegistration(reg)}
-                      className="btn-danger btn-sm flex items-center gap-1"
-                    ><XCircle size={14} /> Tolak</button>
+                  <div className="flex gap-2">
+                    <button onClick={() => approveRegistration(reg)}
+                      className="btn-primary btn-sm gap-1">
+                      <CheckCircle size={13} /> Setuju
+                    </button>
+                    <button onClick={() => rejectRegistration(reg)}
+                      className="btn-danger btn-sm gap-1">
+                      <XCircle size={13} /> Tolak
+                    </button>
                   </div>
                 )}
               </div>
@@ -186,25 +252,34 @@ export default function MembersPage() {
         </div>
       )}
 
-      {/* Active / all members */}
+      {/* Members list */}
       {tab !== 'pending' && (
         <>
           {/* Search & filter */}
           <div className="flex gap-3 flex-wrap">
             <div className="relative flex-1 min-w-48">
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                className="input pl-9"
-                placeholder="Cari nama, nickname, lingkungan..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-              />
+              <input className="input pl-9" placeholder="Cari nama, nickname, lingkungan, MyID..."
+                value={search} onChange={e => setSearch(e.target.value)} />
             </div>
-            <select className="input w-auto" value={filter.pendidikan} onChange={e => setFilter(f => ({...f, pendidikan: e.target.value}))}>
+            <select className="input w-auto"
+              value={filter.pendidikan}
+              onChange={e => setFilter(f => ({...f, pendidikan: e.target.value}))}>
               <option value="">Semua Pendidikan</option>
               {['SD','SMP','SMA','SMK','Lulus'].map(p => <option key={p}>{p}</option>)}
             </select>
           </div>
+
+          {/* Count info */}
+          {!loading && (
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <Users size={15} />
+              <span>
+                Menampilkan <strong className="text-gray-800">{filtered.length}</strong> anggota
+                {search && ` (filter: "${search}")`}
+              </span>
+            </div>
+          )}
 
           {/* Table */}
           <div className="card overflow-hidden p-0">
@@ -212,8 +287,8 @@ export default function MembersPage() {
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>Nama Panggilan</th>
-                    <th>Nama Lengkap</th>
+                    <th>Nama</th>
+                    <th>MyID / Checksum</th>
                     <th>Pendidikan</th>
                     <th>Lingkungan</th>
                     <th>Status</th>
@@ -223,38 +298,70 @@ export default function MembersPage() {
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={7} className="text-center py-8 text-gray-400">Memuat...</td></tr>
+                    [...Array(5)].map((_, i) => (
+                      <tr key={i}>
+                        {[...Array(7)].map((_, j) => (
+                          <td key={j}><div className="skeleton h-4 rounded w-full" /></td>
+                        ))}
+                      </tr>
+                    ))
                   ) : filtered.length === 0 ? (
-                    <tr><td colSpan={7} className="text-center py-8 text-gray-400">Tidak ada data</td></tr>
+                    <tr>
+                      <td colSpan={7} className="text-center py-10">
+                        <Users size={40} className="mx-auto text-gray-200 mb-2" />
+                        <p className="text-gray-400 text-sm">
+                          {search ? `Tidak ada hasil untuk "${search}"` : 'Belum ada anggota'}
+                        </p>
+                        {!search && tab === 'active' && (
+                          <p className="text-xs text-gray-400 mt-1">
+                            Coba tab <button onClick={() => setTab('all')}
+                              className="text-brand-800 underline">Semua</button> untuk lihat semua data
+                          </p>
+                        )}
+                      </td>
+                    </tr>
                   ) : filtered.map(m => (
                     <tr key={m.id}>
                       <td>
                         <div className="flex items-center gap-2">
                           <div className="w-7 h-7 bg-brand-100 rounded-full flex items-center justify-center text-brand-800 font-bold text-xs flex-shrink-0">
-                            {m.nama_panggilan?.[0]?.toUpperCase()}
+                            {(m.nama_panggilan || m.nickname || '?')[0].toUpperCase()}
                           </div>
                           <div>
-                            <div className="font-semibold text-gray-900">{m.nama_panggilan}</div>
+                            <div className="font-semibold text-gray-900 text-sm">
+                              {m.nama_panggilan || m.nickname}
+                            </div>
                             <div className="text-xs text-gray-400">@{m.nickname}</div>
                           </div>
-                          {m.is_tarakanita && <span className="badge-blue">T</span>}
+                          {m.is_tarakanita && (
+                            <span className="badge-blue text-[10px]">T</span>
+                          )}
                         </div>
                       </td>
-                      <td className="text-gray-600">{truncate(m.nama_lengkap, 25)}</td>
-                      <td><span className="badge-gray">{m.pendidikan || '—'}</span></td>
-                      <td className="text-gray-600">{m.lingkungan}</td>
+                      <td>
+                        <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono text-gray-700">
+                          {m.myid || '—'}
+                        </code>
+                      </td>
+                      <td>
+                        <span className="badge-gray">{m.pendidikan || '—'}</span>
+                      </td>
+                      <td className="text-gray-600 text-sm">{m.lingkungan || '—'}</td>
                       <td>
                         <span className={`badge ${
-                          m.status === 'Active' ? 'badge-green' :
-                          m.status === 'Pending' ? 'badge-yellow' :
-                          m.is_suspended ? 'badge-red' : 'badge-gray'
+                          m.is_suspended ? 'badge-red' :
+                          m.status === 'Active'   ? 'badge-green' :
+                          m.status === 'Pending'  ? 'badge-yellow' :
+                          'badge-gray'
                         }`}>
-                          {m.is_suspended ? 'Suspended' : STATUS_LABELS[m.status] || m.status}
+                          {m.is_suspended ? 'Suspended' : (STATUS_LABELS[m.status] || m.status)}
                         </span>
                       </td>
-                      <td className="text-xs text-gray-500">{ROLE_LABELS[m.role] || m.role}</td>
+                      <td className="text-xs text-gray-500">
+                        {ROLE_LABELS[m.role] || m.role}
+                      </td>
                       <td>
-                        <Link to={`/anggota/${m.id}`} className="btn-ghost btn-sm">
+                        <Link to={`/anggota/${m.id}`} className="btn-ghost btn-sm p-1.5">
                           <Eye size={14} />
                         </Link>
                       </td>
