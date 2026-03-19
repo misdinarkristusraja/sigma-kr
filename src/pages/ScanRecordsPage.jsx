@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { formatWIB, downloadCSV } from '../lib/utils';
 import { Search, Download, RefreshCw, AlertTriangle, CheckCircle, Filter } from 'lucide-react';
 
@@ -11,6 +12,7 @@ const SCAN_TYPE_LABELS = {
 };
 
 export default function ScanRecordsPage() {
+  const { profile, isPengurus } = useAuth();
   const [records,  setRecords]  = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [search,   setSearch]   = useState('');
@@ -33,6 +35,11 @@ export default function ScanRecordsPage() {
         `, { count: 'exact' })
         .order('timestamp', { ascending: false })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+      // Pelatih hanya lihat scan yang dia lakukan sendiri
+      if (!isPengurus && profile?.id) {
+        q = q.eq('scanner_user_id', profile.id);
+      }
 
       if (filter.scan_type) q = q.eq('scan_type', filter.scan_type);
       if (filter.anomaly === 'yes') q = q.eq('is_anomaly', true);

@@ -216,6 +216,10 @@ export default function ScheduleWeeklyPage() {
   const [deleteConf, setDeleteConf] = useState(null);
   const [picOptions, setPicOptions] = useState([]);
   const exportRef    = useRef(null);
+  const [activeTab,  setActiveTab]  = useState('jadwal'); // 'jadwal' | 'pic'
+  // Quick PIC state: { [eventId]: { slot: { a, b, hpA, hpB } } }
+  const [picBatch,   setPicBatch]   = useState({});
+  const [savingPIC,  setSavingPIC]  = useState(false);
   const [showAddMisa, setShowAddMisa] = useState(false);
   const INIT_MISA_FORM = {
     tipe:            'Misa_Khusus',  // 'Misa_Khusus' | 'Mingguan_HariRaya'
@@ -446,6 +450,49 @@ export default function ScheduleWeeklyPage() {
     loadEvents();
   }
 
+  // ── Simpan semua PIC sekaligus (dari tab PIC) ────────────
+  async function savePICBatch() {
+    const entries = Object.entries(picBatch);
+    if (!entries.length) { toast('Tidak ada perubahan'); return; }
+    setSavingPIC(true);
+    let saved = 0;
+    for (const [eventId, slots] of entries) {
+      const update = {};
+      for (let s = 1; s <= 4; s++) {
+        const sl = slots[s];
+        if (!sl) continue;
+        if (sl.a  !== undefined) update[`pic_slot_${s}a`]    = sl.a  || null;
+        if (sl.b  !== undefined) update[`pic_slot_${s}b`]    = sl.b  || null;
+        if (sl.hpA!== undefined) update[`pic_hp_slot_${s}a`] = sl.hpA|| null;
+        if (sl.hpB!== undefined) update[`pic_hp_slot_${s}b`] = sl.hpB|| null;
+      }
+      if (Object.keys(update).length) {
+        await supabase.from('events').update(update).eq('id', eventId);
+        saved++;
+      }
+    }
+    setPicBatch({});
+    setSavingPIC(false);
+    toast.success(`PIC berhasil disimpan untuk ${saved} jadwal!`);
+    loadEvents();
+  }
+
+  function setPICField(eventId, slot, pos, nick) {
+    const found = picOptions.find(p => p.nickname === nick);
+    const hp    = found ? (found.hp_anak || found.hp_ortu || '') : '';
+    setPicBatch(b => ({
+      ...b,
+      [eventId]: {
+        ...(b[eventId] || {}),
+        [slot]: {
+          ...(b[eventId]?.[slot] || {}),
+          [pos]: nick,
+          [pos === 'a' ? 'hpA' : 'hpB']: hp,
+        },
+      },
+    }));
+  }
+
   // ── Publish / Unpublish ────────────────────────────────────
   async function publishEvent(ev) {
     // Cek PIC semua slot sudah diisi
@@ -620,6 +667,101 @@ export default function ScheduleWeeklyPage() {
           )}
         </div>
       )}
+
+      {/* Tabs */}
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+        {[
+          { key: 'jadwal', label: '📅 Jadwal' },
+          { key: 'pic',    label: `🙋 Kelola PIC${Object.keys(picBatch).length > 0 ? ` (${Object.keys(picBatch).length} pending)` : ''}` },
+        ].map(t => (
+          <button key={t.key} onClick={() => setActiveTab(t.key)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab===t.key?'bg-white text-brand-800 shadow-sm':'text-gray-500'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── TAB PIC ── */}
+      {activeTab === 'pic' && (
+        <div className="space-y-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center justify-between gap-3">
+            <p className="text-sm text-blue-700">
+              Isi PIC untuk semua slot sekaligus, lalu klik <strong>Simpan Semua PIC</strong>.
+              Perubahan disimpan setelah klik tombol — belum tersimpan jika hanya dipilih.
+            </p>
+            <button onClick={savePICBatch} disabled={savingPIC || !Object.keys(picBatch).length}
+              className="btn-primary gap-2 flex-shrink-0">
+              <Check size={16}/> {savingPIC ? 'Menyimpan...' : 'Simpan Semua PIC'}
+            </button>
+          </div>
+
+          {events.length === 0 ? (
+            <div className="card text-center py-10 text-gray-400">Belum ada jadwal bulan ini</div>
+          ) : (
+            <div className="space-y-4">
+              {events.map(ev => {
+                const lc = getLiturgyClass(ev.warna_liturgi);
+                return (
+                  <div key={ev.id} className={`card border-l-4 ${ev.is_draft?'border-yellow-400':'border-green-400'}`}>
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className={`w-3 h-3 rounded-full ${lc.dot}`}/>
+                      <div>
+                        <p className="font-bold text-gray-900">{ev.perayaan || ev.nama_event}</p>
+                        <p className="text-xs text-gray-500">
+                          {formatDate(ev.tanggal_latihan,'dd MMM')} – {formatDate(ev.tanggal_tugas,'dd MMM yyyy')}
+                          {ev.is_draft ? ' · Draft' : ' · Published'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                      {[1,2,3,4].map(slot => {
+                        const curA = picBatch[ev.id]?.[slot]?.a ?? ev[`pic_slot_${slot}a`] ?? '';
+                        const curB = picBatch[ev.id]?.[slot]?.b ?? ev[`pic_slot_${slot}b`] ?? '';
+                        const info = SLOT_INFO[slot];
+                        return (
+                          <div key={slot} className="p-3 bg-gray-50 rounded-xl">
+                            <p className="text-xs font-bold text-gray-600 mb-2">{info.time}</p>
+                            <div className="space-y-2">
+                              <div>
+                                <label className="text-[10px] text-gray-400">PIC 1</label>
+                                <select className="input text-xs mt-0.5" value={curA}
+                                  onChange={e => setPICField(ev.id, slot, 'a', e.target.value)}>
+                                  <option value="">— Pilih —</option>
+                                  {picOptions.map(p => (
+                                    <option key={p.id} value={p.nickname}>{p.nama_panggilan}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-gray-400">PIC 2</label>
+                                <select className="input text-xs mt-0.5" value={curB}
+                                  onChange={e => setPICField(ev.id, slot, 'b', e.target.value)}>
+                                  <option value="">— Pilih —</option>
+                                  {picOptions.map(p => (
+                                    <option key={p.id} value={p.nickname}>{p.nama_panggilan}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              {(curA||curB) && (
+                                <p className="text-[10px] text-brand-700 font-medium truncate">
+                                  ✓ {[curA,curB].filter(Boolean).join(' & ')}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── TAB JADWAL ── */}
+      {activeTab === 'jadwal' && <>
 
       {/* Info box */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm text-blue-700 flex items-start gap-2">
@@ -984,6 +1126,8 @@ export default function ScheduleWeeklyPage() {
           </div>
         </div>
       )}
+
+      </> /* end TAB JADWAL */}
 
       {/* ── WA Modal ── */}
       {showWA && (

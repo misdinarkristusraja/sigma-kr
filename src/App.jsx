@@ -23,12 +23,25 @@ const ReregistrationPage= lazy(() => import('./pages/ReregistrationPage'));
 const PublicSchedule    = lazy(() => import('./pages/ScheduleDailyPage').then(m => ({ default: m.PublicSchedulePage })));
 const NotFound          = lazy(() => import('./pages/ScheduleDailyPage').then(m => ({ default: m.NotFoundPage })));
 
+// Role groups untuk kemudahan
+const ADMIN_ONLY    = ['Administrator'];
+const ADMIN_PENG    = ['Administrator', 'Pengurus'];
+const ADMIN_PENG_LATIH = ['Administrator', 'Pengurus', 'Pelatih'];
+const ALL_STAFF     = ['Administrator', 'Pengurus', 'Pelatih'];  // sama dengan di atas, alias
+
 function ProtectedRoute({ children, roles }) {
   const { user, profile, loading } = useAuth();
   if (loading) return <LoadingScreen />;
   if (!user)   return <Navigate to="/login" replace />;
-  if (roles && profile && !roles.includes(profile.role)) return <Navigate to="/dashboard" replace />;
+  if (roles && profile && !roles.includes(profile.role))
+    return <Navigate to="/dashboard" replace />;
   return children;
+}
+
+function R({ path, element, roles }) {
+  // Helper: bungkus element dengan ProtectedRoute jika ada roles
+  const wrapped = roles ? <ProtectedRoute roles={roles}>{element}</ProtectedRoute> : element;
+  return <Route path={path} element={wrapped} />;
 }
 
 function AppRoutes() {
@@ -38,44 +51,67 @@ function AppRoutes() {
   return (
     <Suspense fallback={<LoadingScreen />}>
       <Routes>
-        {/* Public */}
+        {/* Public routes */}
         <Route path="/login"  element={user ? <Navigate to="/dashboard" /> : <LoginPage />} />
         <Route path="/daftar" element={<RegisterPage />} />
         <Route path="/jadwal" element={<PublicSchedule />} />
 
-        {/* Protected */}
+        {/* Protected — semua butuh login */}
         <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
           <Route index element={<Navigate to="/dashboard" />} />
-          <Route path="/dashboard"       element={<DashboardPage />} />
 
-          {/* Anggota */}
+          {/* Dashboard — semua role */}
+          <Route path="/dashboard" element={<DashboardPage />} />
+
+          {/* ── Anggota ──────────────────────────────────────────
+              Pengurus: lihat list + approve + ubah status/suspend
+              Pelatih:  lihat list (read-only)
+              Admin:    full CRUD termasuk ubah role
+          ─────────────────────────────────────────────────────── */}
           <Route path="/anggota"
-            element={<ProtectedRoute roles={['Administrator','Pengurus','Pelatih']}><MembersPage /></ProtectedRoute>} />
-          <Route path="/anggota/:id"     element={<MemberDetailPage />} />
+            element={<ProtectedRoute roles={ALL_STAFF}><MembersPage /></ProtectedRoute>} />
+          <Route path="/anggota/:id" element={<MemberDetailPage />} />
 
-          {/* Jadwal */}
+          {/* ── Jadwal Mingguan ──────────────────────────────────
+              Pengurus: generate, edit draft, isi PIC, publish, hapus
+              Pelatih:  TIDAK bisa akses (tidak perlu lihat backend jadwal)
+          ─────────────────────────────────────────────────────── */}
           <Route path="/jadwal-mingguan"
-            element={<ProtectedRoute roles={['Administrator','Pengurus']}><ScheduleWeekly /></ProtectedRoute>} />
-          <Route path="/jadwal-harian"   element={<ScheduleDaily />} />
+            element={<ProtectedRoute roles={ADMIN_PENG}><ScheduleWeekly /></ProtectedRoute>} />
 
-          {/* Scan */}
+          {/* ── Jadwal Harian ────────────────────────────────────
+              Semua login bisa lihat tab Jadwal
+              Pengurus: generate, publish, edit opt-in orang lain
+              Pelatih:  bisa lihat jadwal + isi opt-in sendiri
+              Misdinar: bisa lihat jadwal + isi opt-in sendiri
+          ─────────────────────────────────────────────────────── */}
+          <Route path="/jadwal-harian" element={<ScheduleDaily />} />
+
+          {/* ── Scan QR ──────────────────────────────────────────
+              Admin, Pengurus, Pelatih bisa scan
+          ─────────────────────────────────────────────────────── */}
           <Route path="/scan-qr"
-            element={<ProtectedRoute roles={['Administrator','Pengurus','Pelatih']}><ScanPage /></ProtectedRoute>} />
+            element={<ProtectedRoute roles={ALL_STAFF}><ScanPage /></ProtectedRoute>} />
+
+          {/* ── Riwayat Scan ─────────────────────────────────────
+              Admin & Pengurus: lihat semua + export
+              Pelatih: lihat scan yang dia lakukan (filter di page)
+          ─────────────────────────────────────────────────────── */}
           <Route path="/riwayat-scan"
-            element={<ProtectedRoute roles={['Administrator','Pengurus']}><ScanRecordsPage /></ProtectedRoute>} />
+            element={<ProtectedRoute roles={ALL_STAFF}><ScanRecordsPage /></ProtectedRoute>} />
 
-          {/* Fitur umum */}
-          <Route path="/tukar-jadwal"    element={<SwapPage />} />
-          <Route path="/rekap"           element={<RecapPage />} />
-          <Route path="/leaderboard"     element={<LeaderboardPage />} />
-          <Route path="/kartu"           element={<CardsPage />} />
-          <Route path="/daftar-ulang"    element={<ReregistrationPage />} />
+          {/* ── Fitur semua role ──────────────────────────────── */}
+          <Route path="/tukar-jadwal"  element={<SwapPage />} />
+          <Route path="/rekap"         element={<RecapPage />} />
+          <Route path="/leaderboard"   element={<LeaderboardPage />} />
+          <Route path="/kartu"         element={<CardsPage />} />
+          <Route path="/daftar-ulang"  element={<ReregistrationPage />} />
 
-          {/* Admin */}
+          {/* ── Admin only ───────────────────────────────────── */}
           <Route path="/migrasi"
-            element={<ProtectedRoute roles={['Administrator']}><MigrationPage /></ProtectedRoute>} />
+            element={<ProtectedRoute roles={ADMIN_ONLY}><MigrationPage /></ProtectedRoute>} />
           <Route path="/admin"
-            element={<ProtectedRoute roles={['Administrator']}><AdminPage /></ProtectedRoute>} />
+            element={<ProtectedRoute roles={ADMIN_ONLY}><AdminPage /></ProtectedRoute>} />
         </Route>
 
         <Route path="*" element={<NotFound />} />

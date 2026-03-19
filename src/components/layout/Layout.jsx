@@ -10,20 +10,24 @@ import {
 import { cn, truncate } from '../../lib/utils';
 import toast from 'react-hot-toast';
 
+const STAFF = ['Administrator', 'Pengurus', 'Pelatih'];
+const PENG  = ['Administrator', 'Pengurus'];
+const ADMIN = ['Administrator'];
+
 const NAV_ITEMS = [
-  { icon: LayoutDashboard, label: 'Dashboard',        path: '/dashboard',       roles: null },
-  { icon: Users,           label: 'Anggota',          path: '/anggota',         roles: ['Administrator','Pengurus','Pelatih'] },
-  { icon: Calendar,        label: 'Jadwal Mingguan',  path: '/jadwal-mingguan', roles: ['Administrator','Pengurus'] },
-  { icon: CalendarDays,    label: 'Misa Harian',      path: '/jadwal-harian',   roles: ['Administrator','Pengurus'] },
-  { icon: QrCode,          label: 'Scan QR',          path: '/scan-qr',         roles: ['Administrator','Pengurus','Pelatih'] },
-  { icon: ClipboardList,   label: 'Riwayat Scan',     path: '/riwayat-scan',    roles: ['Administrator','Pengurus'] },
-  { icon: ArrowLeftRight,  label: 'Tukar Jadwal',     path: '/tukar-jadwal',    roles: null },
-  { icon: BarChart2,       label: 'Rekap & Poin',     path: '/rekap',           roles: null },
-  { icon: Trophy,          label: 'Leaderboard',      path: '/leaderboard',     roles: null },
-  { icon: CreditCard,      label: 'Kartu Anggota',    path: '/kartu',           roles: null },
-  { icon: RefreshCw,       label: 'Daftar Ulang',     path: '/daftar-ulang',    roles: null },
-  { icon: Database,        label: 'Migrasi Data',     path: '/migrasi',         roles: ['Administrator'] },
-  { icon: Settings,        label: 'Admin & Config',   path: '/admin',           roles: ['Administrator'] },
+  { icon: LayoutDashboard, label: 'Dashboard',        path: '/dashboard',       roles: null  },
+  { icon: Users,           label: 'Anggota',          path: '/anggota',         roles: STAFF },
+  { icon: Calendar,        label: 'Jadwal Mingguan',  path: '/jadwal-mingguan', roles: PENG  },
+  { icon: CalendarDays,    label: 'Misa Harian',      path: '/jadwal-harian',   roles: null  }, // semua bisa lihat
+  { icon: QrCode,          label: 'Scan QR',          path: '/scan-qr',         roles: STAFF },
+  { icon: ClipboardList,   label: 'Riwayat Scan',     path: '/riwayat-scan',    roles: STAFF }, // Pelatih juga
+  { icon: ArrowLeftRight,  label: 'Tukar Jadwal',     path: '/tukar-jadwal',    roles: null  },
+  { icon: BarChart2,       label: 'Rekap & Poin',     path: '/rekap',           roles: null  },
+  { icon: Trophy,          label: 'Leaderboard',      path: '/leaderboard',     roles: null  },
+  { icon: CreditCard,      label: 'Kartu Anggota',    path: '/kartu',           roles: null  },
+  { icon: RefreshCw,       label: 'Daftar Ulang',     path: '/daftar-ulang',    roles: null  },
+  { icon: Database,        label: 'Migrasi Data',     path: '/migrasi',         roles: ADMIN },
+  { icon: Settings,        label: 'Admin & Config',   path: '/admin',           roles: ADMIN },
 ];
 
 export default function Layout() {

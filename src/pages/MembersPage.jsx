@@ -4,8 +4,9 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { truncate, ROLE_LABELS, STATUS_LABELS, formatDate, buildWALink, generateMyID } from '../lib/utils';
 import {
-  Search, UserPlus, CheckCircle, XCircle, Eye,
-  Download, RefreshCw, AlertTriangle, Users
+  Search, CheckCircle, XCircle, Eye,
+  Download, RefreshCw, AlertTriangle, Users,
+  ShieldAlert, ShieldCheck, ChevronDown, Edit2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -26,6 +27,7 @@ export default function MembersPage() {
   const [error,    setError]   = useState('');
   const [total,    setTotal]   = useState(0);
   const [filter,   setFilter]  = useState({ pendidikan: '' });
+  const [quickEdit, setQuickEdit] = useState(null); // { id, field } — baris yang sedang diedit
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -83,6 +85,32 @@ export default function MembersPage() {
     return [m.nama_panggilan, m.nickname, m.nama_lengkap, m.lingkungan, m.sekolah, m.myid]
       .some(v => v?.toLowerCase().includes(q));
   });
+
+  // ── Quick inline change status/role ───────────────────────
+  async function quickChange(memberId, field, value) {
+    const { error } = await supabase
+      .from('users')
+      .update({ [field]: value, updated_at: new Date().toISOString() })
+      .eq('id', memberId);
+    if (error) { toast.error('Gagal: ' + error.message); return; }
+    toast.success(`${field === 'status' ? 'Status' : 'Role'} diperbarui`);
+    setQuickEdit(null);
+    loadData();
+  }
+
+  // ── Quick suspend / unsuspend ──────────────────────────────
+  async function toggleSuspend(member) {
+    const newVal    = !member.is_suspended;
+    const until     = newVal
+      ? new Date(Date.now() + 30*24*60*60*1000).toISOString().split('T')[0]
+      : null;
+    const { error } = await supabase.from('users')
+      .update({ is_suspended: newVal, suspended_until: until, updated_at: new Date().toISOString() })
+      .eq('id', member.id);
+    if (error) { toast.error(error.message); return; }
+    toast.success(newVal ? `${member.nama_panggilan} disuspend 30 hari` : 'Suspend dicabut');
+    loadData();
+  }
 
   // ── Approve Registrasi ──────────────────────────────────────
   async function approveRegistration(reg) {
@@ -347,23 +375,75 @@ export default function MembersPage() {
                         <span className="badge-gray">{m.pendidikan || '—'}</span>
                       </td>
                       <td className="text-gray-600 text-sm">{m.lingkungan || '—'}</td>
+                      {/* Status — inline editable for pengurus */}
                       <td>
-                        <span className={`badge ${
-                          m.is_suspended ? 'badge-red' :
-                          m.status === 'Active'   ? 'badge-green' :
-                          m.status === 'Pending'  ? 'badge-yellow' :
-                          'badge-gray'
-                        }`}>
-                          {m.is_suspended ? 'Suspended' : (STATUS_LABELS[m.status] || m.status)}
-                        </span>
+                        {isPengurus && quickEdit?.id === m.id && quickEdit?.field === 'status' ? (
+                          <div className="flex items-center gap-1">
+                            <select className="input text-xs py-0.5 w-28" autoFocus
+                              defaultValue={m.status}
+                              onChange={e => quickChange(m.id, 'status', e.target.value)}
+                              onBlur={() => setQuickEdit(null)}>
+                              <option value="Active">Aktif</option>
+                              <option value="Pending">Pending</option>
+                              <option value="Retired">Alumni</option>
+                            </select>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => isPengurus && setQuickEdit({ id: m.id, field: 'status' })}
+                            className={`badge flex items-center gap-1 ${
+                              m.is_suspended ? 'badge-red' :
+                              m.status === 'Active'  ? 'badge-green' :
+                              m.status === 'Pending' ? 'badge-yellow' :
+                              'badge-gray'
+                            } ${isPengurus ? 'cursor-pointer hover:opacity-80' : ''}`}
+                            title={isPengurus ? 'Klik untuk ubah status' : ''}>
+                            {m.is_suspended ? '⛔ Suspended' : (STATUS_LABELS[m.status] || m.status)}
+                            {isPengurus && <ChevronDown size={10}/>}
+                          </button>
+                        )}
                       </td>
-                      <td className="text-xs text-gray-500">
-                        {ROLE_LABELS[m.role] || m.role}
-                      </td>
+
+                      {/* Role — inline editable for admin only */}
                       <td>
-                        <Link to={`/anggota/${m.id}`} className="btn-ghost btn-sm p-1.5">
-                          <Eye size={14} />
-                        </Link>
+                        {isAdmin && quickEdit?.id === m.id && quickEdit?.field === 'role' ? (
+                          <select className="input text-xs py-0.5 w-36" autoFocus
+                            defaultValue={m.role}
+                            onChange={e => quickChange(m.id, 'role', e.target.value)}
+                            onBlur={() => setQuickEdit(null)}>
+                            {['Administrator','Pengurus','Pelatih','Misdinar_Aktif','Misdinar_Retired'].map(r => (
+                              <option key={r} value={r}>{ROLE_LABELS[r]||r}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <button
+                            onClick={() => isAdmin && setQuickEdit({ id: m.id, field: 'role' })}
+                            className={`text-xs text-gray-500 flex items-center gap-1 ${isAdmin ? 'cursor-pointer hover:text-brand-800' : ''}`}
+                            title={isAdmin ? 'Klik untuk ubah role' : ''}>
+                            {ROLE_LABELS[m.role] || m.role}
+                            {isAdmin && <ChevronDown size={10} className="opacity-50"/>}
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Actions */}
+                      <td>
+                        <div className="flex items-center gap-0.5">
+                          <Link to={`/anggota/${m.id}`} className="btn-ghost p-1.5" title="Lihat detail">
+                            <Eye size={14}/>
+                          </Link>
+                          {isPengurus && (
+                            <button
+                              onClick={() => toggleSuspend(m)}
+                              className={`btn-ghost p-1.5 ${m.is_suspended ? 'text-green-600 hover:bg-green-50' : 'text-red-500 hover:bg-red-50'}`}
+                              title={m.is_suspended ? 'Cabut suspend' : 'Suspend 30 hari'}>
+                              {m.is_suspended
+                                ? <ShieldCheck size={14}/>
+                                : <ShieldAlert size={14}/>
+                              }
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
