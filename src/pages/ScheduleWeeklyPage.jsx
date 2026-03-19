@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getLiturgiMinggu as getStaticLiturgi, getLiturgiByMonth, HARI_RAYA_NO_HARIAN } from '../lib/liturgiData2026';
 import { supabase } from '../lib/supabase';
-import { formatDate, getLiturgyClass } from '../lib/utils';
+import { formatDate, getLiturgyClass, tagDuplicateNames } from '../lib/utils';
 import { toPng } from 'html-to-image';
 import {
   Calendar, Download, Send, Edit2, Check, X,
@@ -853,7 +853,7 @@ export default function ScheduleWeeklyPage() {
                               <div key={i} className="flex items-center gap-1.5">
                                 <span className="text-[10px] text-gray-400 w-4 text-right shrink-0">{i+1}.</span>
                                 <div>
-                                  <p className="text-xs font-medium text-gray-800 leading-none">{a.users?.nama_panggilan}</p>
+                                  <p className="text-xs font-medium text-gray-800 leading-none">{nameTag[a.users?.nickname] || a.users?.nama_panggilan}</p>
                                   <p className="text-[10px] text-gray-400">{a.users?.pendidikan} · {a.users?.lingkungan}</p>
                                 </div>
                               </div>

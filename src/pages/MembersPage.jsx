@@ -7,7 +7,7 @@ import {
   Search, CheckCircle, XCircle, Eye,
   Download, RefreshCw, AlertTriangle, Users,
   ShieldAlert, ShieldCheck, ChevronDown, Edit2,
-} from 'lucide-react';
+, MessageCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const TABS = [
@@ -432,6 +432,18 @@ export default function MembersPage() {
                           <Link to={`/anggota/${m.id}`} className="btn-ghost p-1.5" title="Lihat detail">
                             <Eye size={14}/>
                           </Link>
+                          {isPengurus && (m.hp_ortu || m.hp_anak) && (
+                            <button
+                              title={`WA Orang Tua ${m.nama_panggilan}`}
+                              onClick={() => {
+                                const hp = (m.hp_ortu || m.hp_anak || '').replace(/\D/g,'');
+                                const phone = hp.startsWith('0') ? '62'+hp.slice(1) : hp;
+                                window.open(`https://wa.me/${phone}`, '_blank');
+                              }}
+                              className="btn-ghost p-1.5 text-green-600 hover:bg-green-50">
+                              <MessageCircle size={14}/>
+                            </button>
+                          )}
                           {isPengurus && (
                             <button
                               onClick={() => toggleSuspend(m)}

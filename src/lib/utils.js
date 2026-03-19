@@ -163,13 +163,32 @@ export const STATUS_LABELS = {
 };
 
 // ── Points formula (6 kondisi) ────────────────────────────
+/**
+ * Hitung poin & kondisi per minggu — 6 kondisi SIGMA
+ *
+ * K1 (+2): Dijadwalkan + Hadir Tugas + Hadir Latihan
+ * K2 (+3): Walk-in (tidak dijadwalkan) + Hadir Latihan
+ * K3 (+1): Dijadwalkan + Hadir Tugas + Tidak Latihan
+ * K4 (+1): Walk-in (tidak dijadwalkan) + Tidak Latihan
+ * K5 ( 0): Dijadwalkan + Tidak Tugas + Hadir Latihan  ← ada usaha
+ * K6 (-1): Dijadwalkan + Tidak Tugas + Tidak Latihan  ← absen total
+ *
+ * Jika tidak dijadwalkan DAN tidak ada scan sama sekali → null (tidak dihitung)
+ */
 export function hitungPoin({ isDijadwalkan, isHadirTugas, isHadirLatihan, isWalkIn }) {
-  if (isDijadwalkan && isHadirTugas && isHadirLatihan) return { poin: 2, kondisi: 'K1' };
-  if (!isDijadwalkan && isWalkIn && isHadirLatihan)    return { poin: 3, kondisi: 'K2' };
-  if (isDijadwalkan && isHadirTugas && !isHadirLatihan) return { poin: 1, kondisi: 'K3' };
-  if (!isDijadwalkan && isWalkIn && !isHadirLatihan)   return { poin: 2, kondisi: 'K4' };
-  if (!isDijadwalkan && !isWalkIn && isHadirLatihan)   return { poin: 1, kondisi: 'K5' };
-  if (isDijadwalkan && !isHadirTugas)                  return { poin: -1, kondisi: 'K6' };
+  // K1: dijadwalkan + tugas + latihan
+  if (isDijadwalkan && isHadirTugas && isHadirLatihan)  return { poin:  2, kondisi: 'K1' };
+  // K2: walk-in + latihan (bonus karena tidak wajib tapi datang latihan)
+  if (!isDijadwalkan && isWalkIn && isHadirLatihan)     return { poin:  3, kondisi: 'K2' };
+  // K3: dijadwalkan + tugas tapi tidak latihan
+  if (isDijadwalkan && isHadirTugas && !isHadirLatihan) return { poin:  1, kondisi: 'K3' };
+  // K4: walk-in tapi tidak latihan
+  if (!isDijadwalkan && isWalkIn && !isHadirLatihan)    return { poin:  1, kondisi: 'K4' };
+  // K5: dijadwalkan tapi tidak tugas, tapi hadir latihan (ada usaha)
+  if (isDijadwalkan && !isHadirTugas && isHadirLatihan) return { poin:  0, kondisi: 'K5' };
+  // K6: dijadwalkan tapi absen total (tidak tugas, tidak latihan)
+  if (isDijadwalkan && !isHadirTugas && !isHadirLatihan)return { poin: -1, kondisi: 'K6' };
+  // Tidak dijadwalkan & tidak ada scan → tidak dihitung
   return { poin: 0, kondisi: null };
 }
 
@@ -192,3 +211,82 @@ export const sleep = ms => new Promise(r => setTimeout(r, ms));
 // ── Pendidikan options ────────────────────────────────────
 export const PENDIDIKAN_OPTIONS = ['SD', 'SMP', 'SMA', 'SMK', 'Lulus'];
 export const JENJANG_LABELS = { SD: 'SD', SMP: 'SMP', SMA: 'SMA', SMK: 'SMK', Lulus: 'Alumni' };
+
+// ─── Disambiguasi nama panggilan ─────────────────────────
+/**
+ * Jika ada dua orang dengan nama_panggilan sama, tambahkan
+ * suffix otomatis untuk membedakan. Prioritas suffix:
+ *   1. Inisial nama belakang  → "Rafa A."
+ *   2. Lingkungan             → "Rafa (Barnabas)"
+ *   3. Inisial nickname       → "Rafa [rfq]"
+ *
+ * Penggunaan:
+ *   const tagged = tagDuplicateNames(members);
+ *   tagged[member.id] → nama tampil yang unik
+ */
+export function tagDuplicateNames(members) {
+  const result = {};
+  const byName = {};
+
+  // Kelompokkan per nama_panggilan
+  members.forEach(m => {
+    const key = (m.nama_panggilan || '').trim().toLowerCase();
+    if (!byName[key]) byName[key] = [];
+    byName[key].push(m);
+  });
+
+  members.forEach(m => {
+    const key = (m.nama_panggilan || '').trim().toLowerCase();
+    const group = byName[key];
+
+    if (group.length <= 1) {
+      // Tidak ada duplikat — tampilkan apa adanya
+      result[m.id] = m.nama_panggilan || m.nickname;
+    } else {
+      // Ada duplikat — tambahkan suffix disambiguasi
+      const base = m.nama_panggilan || m.nickname;
+
+      // Coba suffix 1: inisial nama belakang dari nama_lengkap
+      if (m.nama_lengkap) {
+        const parts  = m.nama_lengkap.trim().split(/\s+/);
+        if (parts.length > 1) {
+          const initial = parts[parts.length - 1][0].toUpperCase() + '.';
+          // Cek apakah inisial ini unik di dalam group
+          const sameInitial = group.filter(g => {
+            if (!g.nama_lengkap) return false;
+            const gParts = g.nama_lengkap.trim().split(/\s+/);
+            return gParts.length > 1 && gParts[gParts.length-1][0].toUpperCase() === initial[0];
+          });
+          if (sameInitial.length === 1) {
+            result[m.id] = `${base} ${initial}`;
+            return;
+          }
+        }
+      }
+
+      // Coba suffix 2: lingkungan (disingkat)
+      if (m.lingkungan) {
+        const sameLinkg = group.filter(g => g.lingkungan === m.lingkungan);
+        if (sameLinkg.length === 1) {
+          result[m.id] = `${base} (${m.lingkungan})`;
+          return;
+        }
+      }
+
+      // Fallback suffix 3: nickname dalam kurung kotak
+      result[m.id] = `${base} [${m.nickname}]`;
+    }
+  });
+
+  return result; // { userId: displayName }
+}
+
+/**
+ * Versi singkat: dapatkan display name untuk SATU user
+ * berdasarkan konteks daftar anggota yang sedang ditampilkan.
+ */
+export function getDisplayName(member, allMembers) {
+  if (!allMembers || allMembers.length === 0) return member.nama_panggilan || member.nickname;
+  const tagged = tagDuplicateNames(allMembers);
+  return tagged[member.id] || member.nama_panggilan || member.nickname;
+}

@@ -41,7 +41,7 @@ export default function RegisterPage() {
   const [form, setForm] = useState({
     nama_lengkap: '', nickname: '', tanggal_lahir: '', alamat: '',
     lingkungan: '', pendidikan: '', sekolah: '',
-    hp_anak: '', hp_ortu: '', hp_milik: 'Orang Tua',
+    hp_anak: '', hp_ortu: '',
     nama_ayah: '', nama_ibu: '',
     alasan_masuk: '', sampai_kapan: '',
     surat_pernyataan: null,
@@ -141,7 +141,6 @@ export default function RegisterPage() {
         is_tarakanita:      isTarakanita,
         hp_anak:            form.hp_anak ? formatHP(form.hp_anak) : null,
         hp_ortu:            formatHP(form.hp_ortu),
-        hp_milik:           form.hp_milik,
         nama_ayah:          form.nama_ayah,
         nama_ibu:           form.nama_ibu,
         alasan_masuk:       form.alasan_masuk,
@@ -272,27 +271,17 @@ export default function RegisterPage() {
 
           {/* Kontak */}
           <div className="grid grid-cols-2 gap-3">
-            <F name="hp_anak" label="No. HP Anak" hint="Opsional">
+            <F name="hp_anak" label="No. HP Anak (opsional)" hint="Kosongkan jika tidak punya HP sendiri">
               <input className="input" value={form.hp_anak}
                 onChange={e => setForm(f => ({...f, hp_anak: e.target.value}))} placeholder="08xx..." />
             </F>
-            <F name="hp_ortu" label="No. HP Orang Tua" required>
+            <F name="hp_ortu" label="No. HP / WA Orang Tua" required>
               <input className={`input ${errors.hp_ortu ? 'input-error' : ''}`} value={form.hp_ortu}
                 onChange={e => setForm(f => ({...f, hp_ortu: e.target.value}))} placeholder="08xx..." />
             </F>
           </div>
 
-          <F name="hp_milik" label="HP ini milik">
-            <div className="flex gap-4 mt-1">
-              {['Anak','Orang Tua'].map(v => (
-                <label key={v} className="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="hp_milik" value={v} checked={form.hp_milik === v}
-                    onChange={() => setForm(f => ({...f, hp_milik: v}))} />
-                  <span className="text-sm">{v}</span>
-                </label>
-              ))}
-            </div>
-          </F>
+          
 
           <div className="grid grid-cols-2 gap-3">
             <F name="nama_ayah" label="Nama Ayah">
