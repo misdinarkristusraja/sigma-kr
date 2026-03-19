@@ -21,13 +21,10 @@ jobs:
             -H "Content-Type: application/json" \
             -H "Prefer: return=representation" \
             -d '{}')
-
           HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
           BODY=$(echo "$RESPONSE" | grep -v "HTTP_STATUS:")
-
           echo "Status: $HTTP_STATUS"
           echo "Response: $BODY"
-
           if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "204" ]; then
             echo "✅ Rekap poin berhasil"
           else
@@ -42,20 +39,16 @@ jobs:
     name: Ping Supabase (Anti-Pause)
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Supabase
+      - name: Ping Supabase health check
         run: |
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "${SUPABASE_URL}/rest/v1/system_config?select=key&limit=1" \
-            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}")
-
+            "${SUPABASE_URL}/rest/v1/")
           echo "Ping status: $HTTP_STATUS"
-          if [ "$HTTP_STATUS" = "200" ]; then
+          if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "400" ]; then
             echo "✅ Supabase aktif"
           else
-            echo "❌ Ping gagal: $HTTP_STATUS"
+            echo "❌ Supabase tidak merespons: $HTTP_STATUS"
             exit 1
           fi
         env:
-          SUPABASE_URL:              ${{ secrets.VITE_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
