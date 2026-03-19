@@ -5,23 +5,25 @@ import {
   LayoutDashboard, Users, Calendar, CalendarDays, QrCode,
   ArrowLeftRight, BarChart2, Trophy, CreditCard, Database,
   Settings, LogOut, Menu, X, Church, AlertTriangle,
+  ClipboardList, RefreshCw,
 } from 'lucide-react';
 import { cn, truncate } from '../../lib/utils';
 import toast from 'react-hot-toast';
 
-// Semua nav items — visibility dikontrol per role
 const NAV_ITEMS = [
-  { icon: LayoutDashboard, label: 'Dashboard',        path: '/dashboard',        roles: null },
-  { icon: Users,           label: 'Anggota',          path: '/anggota',          roles: ['Administrator','Pengurus','Pelatih'] },
-  { icon: Calendar,        label: 'Jadwal Mingguan',  path: '/jadwal-mingguan',  roles: ['Administrator','Pengurus'] },
-  { icon: CalendarDays,    label: 'Misa Harian',      path: '/jadwal-harian',    roles: ['Administrator','Pengurus'] },
-  { icon: QrCode,          label: 'Scan QR',          path: '/scan-qr',          roles: ['Administrator','Pengurus','Pelatih'] },
-  { icon: ArrowLeftRight,  label: 'Tukar Jadwal',     path: '/tukar-jadwal',     roles: null },
-  { icon: BarChart2,       label: 'Rekap & Poin',     path: '/rekap',            roles: null },
-  { icon: Trophy,          label: 'Leaderboard',      path: '/leaderboard',      roles: null },
-  { icon: CreditCard,      label: 'Kartu Anggota',    path: '/kartu',            roles: null },
-  { icon: Database,        label: 'Migrasi Data',     path: '/migrasi',          roles: ['Administrator'] },
-  { icon: Settings,        label: 'Admin & Config',   path: '/admin',            roles: ['Administrator'] },
+  { icon: LayoutDashboard, label: 'Dashboard',        path: '/dashboard',       roles: null },
+  { icon: Users,           label: 'Anggota',          path: '/anggota',         roles: ['Administrator','Pengurus','Pelatih'] },
+  { icon: Calendar,        label: 'Jadwal Mingguan',  path: '/jadwal-mingguan', roles: ['Administrator','Pengurus'] },
+  { icon: CalendarDays,    label: 'Misa Harian',      path: '/jadwal-harian',   roles: ['Administrator','Pengurus'] },
+  { icon: QrCode,          label: 'Scan QR',          path: '/scan-qr',         roles: ['Administrator','Pengurus','Pelatih'] },
+  { icon: ClipboardList,   label: 'Riwayat Scan',     path: '/riwayat-scan',    roles: ['Administrator','Pengurus'] },
+  { icon: ArrowLeftRight,  label: 'Tukar Jadwal',     path: '/tukar-jadwal',    roles: null },
+  { icon: BarChart2,       label: 'Rekap & Poin',     path: '/rekap',           roles: null },
+  { icon: Trophy,          label: 'Leaderboard',      path: '/leaderboard',     roles: null },
+  { icon: CreditCard,      label: 'Kartu Anggota',    path: '/kartu',           roles: null },
+  { icon: RefreshCw,       label: 'Daftar Ulang',     path: '/daftar-ulang',    roles: null },
+  { icon: Database,        label: 'Migrasi Data',     path: '/migrasi',         roles: ['Administrator'] },
+  { icon: Settings,        label: 'Admin & Config',   path: '/admin',           roles: ['Administrator'] },
 ];
 
 export default function Layout() {
@@ -35,19 +37,14 @@ export default function Layout() {
     navigate('/login');
   }
 
-  // Tampilkan item jika:
-  // - roles === null (semua bisa lihat), ATAU
-  // - profile belum load (tampilkan semua agar tidak blank), ATAU
-  // - role ada di list
   function canSeeItem(item) {
     if (!item.roles) return true;
-    if (!role) return true; // profile belum load, tampilkan semua dulu
+    if (!role) return true;
     return item.roles.includes(role);
   }
 
   const visibleItems = NAV_ITEMS.filter(canSeeItem);
-
-  const displayName = profile?.nama_panggilan || profile?.nickname || '...';
+  const displayName  = profile?.nama_panggilan || profile?.nickname || '...';
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
@@ -62,10 +59,10 @@ export default function Layout() {
         </div>
       </div>
 
-      {/* Profile belum load warning */}
+      {/* Warning jika profile belum load */}
       {!profile && !authLoading && (
         <div className="mx-3 mt-3 p-2 bg-yellow-500/20 rounded-lg flex items-start gap-2">
-          <AlertTriangle size={14} className="text-yellow-300 flex-shrink-0 mt-0.5" />
+          <AlertTriangle size={13} className="text-yellow-300 flex-shrink-0 mt-0.5" />
           <p className="text-[10px] text-yellow-200 leading-tight">
             Profil tidak ditemukan. Pastikan data admin sudah diinsert ke tabel users.
           </p>
@@ -75,14 +72,10 @@ export default function Layout() {
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
         {visibleItems.map(item => (
-          <NavLink
-            key={item.path}
-            to={item.path}
-            onClick={() => setOpen(false)}
+          <NavLink key={item.path} to={item.path} onClick={() => setOpen(false)}
             className={({ isActive }) =>
               cn('nav-item', isActive ? 'nav-item-active' : 'nav-item-inactive text-brand-100/80')
-            }
-          >
+            }>
             <item.icon size={17} />
             <span className="text-sm">{item.label}</span>
           </NavLink>
@@ -96,18 +89,10 @@ export default function Layout() {
             {displayName[0]?.toUpperCase() || '?'}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-white truncate">
-              {truncate(displayName, 18)}
-            </div>
-            <div className="text-[11px] text-brand-200">
-              {role?.replace('_', ' ') || 'Memuat...'}
-            </div>
+            <div className="text-sm font-semibold text-white truncate">{truncate(displayName, 18)}</div>
+            <div className="text-[11px] text-brand-200">{role?.replace('_',' ') || 'Memuat...'}</div>
           </div>
-          <button
-            onClick={handleSignOut}
-            className="p-1.5 rounded-lg text-brand-200 hover:text-white hover:bg-white/10 transition-colors"
-            title="Logout"
-          >
+          <button onClick={handleSignOut} className="p-1.5 rounded-lg text-brand-200 hover:text-white hover:bg-white/10" title="Logout">
             <LogOut size={15} />
           </button>
         </div>
@@ -117,12 +102,10 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      {/* Desktop sidebar */}
       <aside className="hidden lg:flex w-60 flex-shrink-0 bg-brand-800 flex-col">
         <SidebarContent />
       </aside>
 
-      {/* Mobile sidebar overlay */}
       {open && (
         <div className="lg:hidden fixed inset-0 z-50 flex">
           <div className="fixed inset-0 bg-black/50" onClick={() => setOpen(false)} />
@@ -135,9 +118,7 @@ export default function Layout() {
         </div>
       )}
 
-      {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Mobile topbar */}
         <header className="lg:hidden flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-200 shadow-sm">
           <button onClick={() => setOpen(true)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-600">
             <Menu size={20} />
@@ -147,8 +128,6 @@ export default function Layout() {
             <span className="font-bold text-brand-800">SIGMA</span>
           </div>
         </header>
-
-        {/* Page content */}
         <main className="flex-1 overflow-y-auto">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
             <Outlet />

@@ -8,41 +8,27 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Gunakan RPC get_my_profile() — SECURITY DEFINER, bypass RLS, tidak ada timing issue
   const fetchProfile = useCallback(async () => {
     try {
       const { data, error } = await supabase.rpc('get_my_profile');
-
-      if (error) {
-        console.error('fetchProfile RPC error:', error.message);
-        return;
-      }
-      if (!data) {
-        console.warn('get_my_profile() return null — user belum ada di tabel users');
-        return;
-      }
-      setProfile(data);
+      if (error) { console.error('fetchProfile:', error.message); return; }
+      if (data) setProfile(data);
     } catch (err) {
       console.error('fetchProfile exception:', err);
     }
   }, []);
 
   useEffect(() => {
-    // Load session awal
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null);
-      if (session?.user) {
-        await fetchProfile();
-      }
+      if (session?.user) await fetchProfile();
       setLoading(false);
     });
 
-    // Listen perubahan auth state
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setUser(session?.user ?? null);
       if (session?.user) {
-        // Delay kecil biar JWT ter-attach dulu
-        setTimeout(() => fetchProfile(), 100);
+        setTimeout(() => fetchProfile(), 150);
       } else {
         setProfile(null);
       }
@@ -51,20 +37,22 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, [fetchProfile]);
 
-  async function signIn(emailOrNickname, password) {
-    let email = emailOrNickname.trim();
+  // Login dengan USERNAME saja (bukan email)
+  async function signIn(username, password) {
+    // 1. Cari email dari nickname via RPC (SECURITY DEFINER — bypass RLS)
+    const { data: email, error: lookupErr } = await supabase.rpc('get_email_by_nickname', {
+      p_nickname: username.toLowerCase().trim(),
+    });
 
-    // Jika input bukan email, cari email dari nickname
-    if (!email.includes('@')) {
-      const { data } = await supabase.rpc('get_email_by_nickname', { p_nickname: email.toLowerCase() });
-      if (!data) throw new Error('Username tidak ditemukan');
-      email = data;
+    if (lookupErr || !email) {
+      throw new Error(`Username "${username}" tidak ditemukan di SIGMA`);
     }
 
+    // 2. Login dengan email yang ditemukan
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
 
-    // Tunggu sebentar lalu fetch profile
+    // 3. Fetch profile
     await new Promise(r => setTimeout(r, 200));
     await fetchProfile();
     return data;
@@ -77,11 +65,10 @@ export function AuthProvider({ children }) {
   }
 
   const role = profile?.role ?? null;
-  const isAdmin     = role === 'Administrator';
-  const isPengurus  = ['Administrator', 'Pengurus'].includes(role);
-  const isPelatih   = ['Administrator', 'Pengurus', 'Pelatih'].includes(role);
-  const canScan     = isPelatih;
-  const canSchedule = isPengurus;
+  const isAdmin    = role === 'Administrator';
+  const isPengurus = ['Administrator', 'Pengurus'].includes(role);
+  const isPelatih  = ['Administrator', 'Pengurus', 'Pelatih'].includes(role);
+  const canScan    = isPelatih;
 
   function hasRole(...roles) { return roles.includes(role); }
 
@@ -89,7 +76,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       user, profile, loading,
       signIn, signOut, fetchProfile,
-      isAdmin, isPengurus, isPelatih, canScan, canSchedule, hasRole, role,
+      isAdmin, isPengurus, isPelatih, canScan, role, hasRole,
     }}>
       {children}
     </AuthContext.Provider>
