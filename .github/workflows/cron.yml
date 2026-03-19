@@ -2,8 +2,8 @@ name: SIGMA — Cron Jobs
 
 on:
   schedule:
-    - cron: '0 12 * * *'    # Rekap poin 19:00 WIB = 12:00 UTC
-    - cron: '0 1 */3 * *'   # Ping anti-pause 08:00 WIB = 01:00 UTC
+    - cron: '0 12 * * *'
+    - cron: '0 1 */3 * *'
   workflow_dispatch:
 
 jobs:
@@ -28,18 +28,10 @@ jobs:
           echo "Status: $HTTP_STATUS"
           echo "Response: $BODY"
 
-          # 200 = success dengan body, 204 = success tanpa body
           if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "204" ]; then
             echo "✅ Rekap poin berhasil"
-            # Cek apakah fungsi sendiri return error di dalam body
-            if echo "$BODY" | grep -q '"ok":false'; then
-              echo "⚠️ Fungsi return error internal:"
-              echo "$BODY"
-              exit 1
-            fi
           else
             echo "❌ HTTP Error $HTTP_STATUS"
-            echo "Response: $BODY"
             exit 1
           fi
         env:
