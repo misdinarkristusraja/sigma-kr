@@ -2,89 +2,68 @@ name: SIGMA — Cron Jobs
 
 on:
   schedule:
-    # Rekap poin setiap hari 19:00 WIB = 12:00 UTC
-    - cron: '0 12 * * *'
-    # Ping anti-pause Supabase setiap 3 hari 08:00 WIB = 01:00 UTC
-    - cron: '0 1 */3 * *'
-  workflow_dispatch:  # bisa trigger manual dari tab Actions
+    - cron: '0 12 * * *'    # Rekap poin 19:00 WIB = 12:00 UTC
+    - cron: '0 1 */3 * *'   # Ping anti-pause 08:00 WIB = 01:00 UTC
+  workflow_dispatch:
 
 jobs:
-  # ── Rekap Poin Harian (19:00 WIB) ─────────────────────────
   rekap-harian:
     name: Update Rekap Poin (19:00 WIB)
     runs-on: ubuntu-latest
     steps:
-      - name: Panggil fungsi update_rekap_poin via Supabase REST API
-        # Tidak butuh Edge Function — langsung panggil fungsi PostgreSQL
-        # lewat endpoint /rest/v1/rpc/update_rekap_poin yang sudah ada
+      - name: Panggil update_rekap_poin via REST API
         run: |
-          HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
             -X POST \
             "${SUPABASE_URL}/rest/v1/rpc/update_rekap_poin" \
             -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
             -H "Content-Type: application/json" \
-            -H "Prefer: return=minimal" \
+            -H "Prefer: return=representation" \
             -d '{}')
 
-          echo "HTTP Status: $HTTP_CODE"
-          echo "Response: $(cat /tmp/response.txt)"
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | grep -v "HTTP_STATUS:")
 
-          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "204" ]; then
-            echo "❌ Rekap poin gagal - status $HTTP_CODE"
-            echo "Isi response: $(cat /tmp/response.txt)"
+          echo "Status: $HTTP_STATUS"
+          echo "Response: $BODY"
+
+          # 200 = success dengan body, 204 = success tanpa body
+          if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "204" ]; then
+            echo "✅ Rekap poin berhasil"
+            # Cek apakah fungsi sendiri return error di dalam body
+            if echo "$BODY" | grep -q '"ok":false'; then
+              echo "⚠️ Fungsi return error internal:"
+              echo "$BODY"
+              exit 1
+            fi
+          else
+            echo "❌ HTTP Error $HTTP_STATUS"
+            echo "Response: $BODY"
             exit 1
           fi
-
-          echo "✅ Rekap poin berhasil diupdate (status $HTTP_CODE)"
         env:
           SUPABASE_URL:              ${{ secrets.VITE_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
-  # ── Expire Swap Requests yang kedaluwarsa ─────────────────
-  expire-swaps:
-    name: Expire Swap Requests Kedaluwarsa
-    runs-on: ubuntu-latest
-    steps:
-      - name: Update status swap request yang sudah expire
-        run: |
-          HTTP_CODE=$(curl -s -o /tmp/resp.txt -w "%{http_code}" \
-            -X PATCH \
-            "${SUPABASE_URL}/rest/v1/swap_requests?status=eq.Pending&expires_at=lt.$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
-            -H "Content-Type: application/json" \
-            -H "Prefer: return=minimal" \
-            -d '{"status": "Expired"}')
-
-          echo "Swap expire status: $HTTP_CODE"
-          echo "✅ Swap requests kedaluwarsa sudah diupdate"
-        env:
-          SUPABASE_URL:              ${{ secrets.VITE_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-
-  # ── Ping Anti-Pause (setiap 3 hari) ───────────────────────
   supabase-ping:
     name: Ping Supabase (Anti-Pause)
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Supabase agar project tidak di-pause
-        # Cukup query ringan ke system_config
+      - name: Ping Supabase
         run: |
-          HTTP_CODE=$(curl -s -o /tmp/ping.txt -w "%{http_code}" \
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             "${SUPABASE_URL}/rest/v1/system_config?select=key&limit=1" \
             -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}")
 
-          echo "Ping status: $HTTP_CODE"
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "⚠️  Ping gagal - status $HTTP_CODE"
-            echo "Response: $(cat /tmp/ping.txt)"
+          echo "Ping status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Supabase aktif"
+          else
+            echo "❌ Ping gagal: $HTTP_STATUS"
             exit 1
           fi
-
-          echo "✅ Supabase aktif (status $HTTP_CODE)"
         env:
           SUPABASE_URL:              ${{ secrets.VITE_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

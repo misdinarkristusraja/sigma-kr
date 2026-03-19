@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import toast from 'react-hot-toast';
 
 const AuthContext = createContext(null);
 
@@ -9,24 +8,17 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = useCallback(async (uid) => {
-    if (!uid) { setProfile(null); return; }
+  // Gunakan RPC get_my_profile() — SECURITY DEFINER, bypass RLS, tidak ada timing issue
+  const fetchProfile = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', uid)
-        .maybeSingle();  // pakai maybeSingle agar tidak throw jika kosong
+      const { data, error } = await supabase.rpc('get_my_profile');
 
       if (error) {
-        console.error('fetchProfile error:', error.message);
-        // Jangan set null — biarkan user tetap login, tampilkan peringatan
-        toast.error('Profil tidak ditemukan. Hubungi administrator.');
+        console.error('fetchProfile RPC error:', error.message);
         return;
       }
       if (!data) {
-        console.warn('fetchProfile: user ada di Auth tapi tidak ada di tabel users. UID:', uid);
-        toast.error('Data profil belum dibuat. Minta admin jalankan SQL insert users.');
+        console.warn('get_my_profile() return null — user belum ada di tabel users');
         return;
       }
       setProfile(data);
@@ -36,19 +28,21 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // Load session awal
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null);
       if (session?.user) {
-        fetchProfile(session.user.id).finally(() => setLoading(false));
-      } else {
-        setLoading(false);
+        await fetchProfile();
       }
+      setLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    // Listen perubahan auth state
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setUser(session?.user ?? null);
       if (session?.user) {
-        fetchProfile(session.user.id);
+        // Delay kecil biar JWT ter-attach dulu
+        setTimeout(() => fetchProfile(), 100);
       } else {
         setProfile(null);
       }
@@ -59,18 +53,20 @@ export function AuthProvider({ children }) {
 
   async function signIn(emailOrNickname, password) {
     let email = emailOrNickname.trim();
+
+    // Jika input bukan email, cari email dari nickname
     if (!email.includes('@')) {
-      const { data } = await supabase
-        .from('users')
-        .select('email')
-        .eq('nickname', email.toLowerCase())
-        .maybeSingle();
-      if (!data?.email) throw new Error('Username tidak ditemukan');
-      email = data.email;
+      const { data } = await supabase.rpc('get_email_by_nickname', { p_nickname: email.toLowerCase() });
+      if (!data) throw new Error('Username tidak ditemukan');
+      email = data;
     }
+
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
-    await fetchProfile(data.user.id);
+
+    // Tunggu sebentar lalu fetch profile
+    await new Promise(r => setTimeout(r, 200));
+    await fetchProfile();
     return data;
   }
 
@@ -81,22 +77,19 @@ export function AuthProvider({ children }) {
   }
 
   const role = profile?.role ?? null;
-  const isAdmin    = role === 'Administrator';
-  const isPengurus = ['Administrator', 'Pengurus'].includes(role);
-  const isPelatih  = ['Administrator', 'Pengurus', 'Pelatih'].includes(role);
-  const canScan    = isPelatih;
-  const canSchedule= isPengurus;
+  const isAdmin     = role === 'Administrator';
+  const isPengurus  = ['Administrator', 'Pengurus'].includes(role);
+  const isPelatih   = ['Administrator', 'Pengurus', 'Pelatih'].includes(role);
+  const canScan     = isPelatih;
+  const canSchedule = isPengurus;
 
-  function hasRole(...roles) {
-    return roles.includes(role);
-  }
+  function hasRole(...roles) { return roles.includes(role); }
 
   return (
     <AuthContext.Provider value={{
       user, profile, loading,
       signIn, signOut, fetchProfile,
-      isAdmin, isPengurus, isPelatih, canScan, canSchedule, hasRole,
-      role,
+      isAdmin, isPengurus, isPelatih, canScan, canSchedule, hasRole, role,
     }}>
       {children}
     </AuthContext.Provider>
