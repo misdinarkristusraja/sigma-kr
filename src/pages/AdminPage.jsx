@@ -177,7 +177,7 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
       toast('Semua anggota sudah punya password aktif');
       return;
     }
-    if (!confirm(\`Generate password baru untuk \${targets.length} anggota yang belum/wajib ganti password?\`)) return;
+    if (!confirm(`Generate password baru untuk ${targets.length} anggota yang belum/wajib ganti password?`)) return;
 
     setLoadingPw(true);
     const results = [];
@@ -199,14 +199,14 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     }
     setGenResults(results);
     setLoadingPw(false);
-    toast.success(\`\${results.filter(r=>!r.error).length} password berhasil digenerate!\`);
+    toast.success(`${results.filter(r=>!r.error).length} password berhasil digenerate!`);
   }
 
   function openWA(user, password) {
     const hp = (user.hp_ortu || user.hp_anak || '').replace(/\D/g,'');
-    if (!hp) { toast.error(\`\${user.nama_panggilan}: No. HP tidak ada\`); return; }
+    if (!hp) { toast.error(`${user.nama_panggilan}: No. HP tidak ada`); return; }
     const phone = hp.startsWith('0') ? '62' + hp.slice(1) : hp;
-    window.open(\`https://wa.me/\${phone}?text=\${buildWAMsg(user, password)}\`, '_blank');
+    window.open(`https://wa.me/${phone}?text=${buildWAMsg(user, password)}`, '_blank');
   }
 
   return (

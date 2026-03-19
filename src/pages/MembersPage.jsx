@@ -55,7 +55,7 @@ export default function MembersPage() {
 
         // Filter per tab
         if (tab === 'active')  q = q.eq('status', 'Active');
-        if (tab === 'retired') q = q.in('status', ['Retired', 'Misdinar_Retired']);
+        if (tab === 'retired') q = q.eq('status', 'Retired');
 
         // Filter tambahan
         if (filter.pendidikan) q = q.eq('pendidikan', filter.pendidikan);
