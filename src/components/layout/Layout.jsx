@@ -4,12 +4,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import {
   LayoutDashboard, Users, Calendar, CalendarDays, QrCode,
   ArrowLeftRight, BarChart2, Trophy, CreditCard, Database,
-  Settings, LogOut, Menu, X, Bell, ChevronRight,
-  Church, Shield, UserCheck,
+  Settings, LogOut, Menu, X, Church, AlertTriangle,
 } from 'lucide-react';
 import { cn, truncate } from '../../lib/utils';
 import toast from 'react-hot-toast';
 
+// Semua nav items — visibility dikontrol per role
 const NAV_ITEMS = [
   { icon: LayoutDashboard, label: 'Dashboard',        path: '/dashboard',        roles: null },
   { icon: Users,           label: 'Anggota',          path: '/anggota',          roles: ['Administrator','Pengurus','Pelatih'] },
@@ -25,8 +25,8 @@ const NAV_ITEMS = [
 ];
 
 export default function Layout() {
-  const { profile, signOut, isAdmin, isPengurus, isPelatih } = useAuth();
-  const navigate  = useNavigate();
+  const { profile, role, loading: authLoading, signOut } = useAuth();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
 
   async function handleSignOut() {
@@ -35,12 +35,19 @@ export default function Layout() {
     navigate('/login');
   }
 
+  // Tampilkan item jika:
+  // - roles === null (semua bisa lihat), ATAU
+  // - profile belum load (tampilkan semua agar tidak blank), ATAU
+  // - role ada di list
   function canSeeItem(item) {
     if (!item.roles) return true;
-    return item.roles.includes(profile?.role);
+    if (!role) return true; // profile belum load, tampilkan semua dulu
+    return item.roles.includes(role);
   }
 
   const visibleItems = NAV_ITEMS.filter(canSeeItem);
+
+  const displayName = profile?.nama_panggilan || profile?.nickname || '...';
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
@@ -54,6 +61,16 @@ export default function Layout() {
           <div className="text-[10px] text-brand-200 mt-0.5 leading-none">Misdinar KR Solo Baru</div>
         </div>
       </div>
+
+      {/* Profile belum load warning */}
+      {!profile && !authLoading && (
+        <div className="mx-3 mt-3 p-2 bg-yellow-500/20 rounded-lg flex items-start gap-2">
+          <AlertTriangle size={14} className="text-yellow-300 flex-shrink-0 mt-0.5" />
+          <p className="text-[10px] text-yellow-200 leading-tight">
+            Profil tidak ditemukan. Pastikan data admin sudah diinsert ke tabel users.
+          </p>
+        </div>
+      )}
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
@@ -72,17 +89,19 @@ export default function Layout() {
         ))}
       </nav>
 
-      {/* Profile */}
+      {/* Profile footer */}
       <div className="p-3 border-t border-brand-900/30">
         <div className="flex items-center gap-3 px-2 py-2">
           <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
-            {profile?.nama_panggilan?.[0]?.toUpperCase() || '?'}
+            {displayName[0]?.toUpperCase() || '?'}
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-semibold text-white truncate">
-              {truncate(profile?.nama_panggilan || profile?.nickname || '—', 18)}
+              {truncate(displayName, 18)}
             </div>
-            <div className="text-[11px] text-brand-200">{profile?.role?.replace('_', ' ')}</div>
+            <div className="text-[11px] text-brand-200">
+              {role?.replace('_', ' ') || 'Memuat...'}
+            </div>
           </div>
           <button
             onClick={handleSignOut}
@@ -103,15 +122,12 @@ export default function Layout() {
         <SidebarContent />
       </aside>
 
-      {/* Mobile sidebar */}
+      {/* Mobile sidebar overlay */}
       {open && (
         <div className="lg:hidden fixed inset-0 z-50 flex">
           <div className="fixed inset-0 bg-black/50" onClick={() => setOpen(false)} />
           <aside className="relative w-60 bg-brand-800 flex flex-col z-10">
-            <button
-              onClick={() => setOpen(false)}
-              className="absolute top-3 right-3 p-1.5 text-brand-200 hover:text-white"
-            >
+            <button onClick={() => setOpen(false)} className="absolute top-3 right-3 p-1.5 text-brand-200 hover:text-white">
               <X size={20} />
             </button>
             <SidebarContent />
@@ -123,10 +139,7 @@ export default function Layout() {
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Mobile topbar */}
         <header className="lg:hidden flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-200 shadow-sm">
-          <button
-            onClick={() => setOpen(true)}
-            className="p-2 rounded-lg hover:bg-gray-100 text-gray-600"
-          >
+          <button onClick={() => setOpen(true)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-600">
             <Menu size={20} />
           </button>
           <div className="flex items-center gap-2">
