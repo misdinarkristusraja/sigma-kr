@@ -6,8 +6,8 @@ import { truncate, ROLE_LABELS, STATUS_LABELS, formatDate, buildWALink, generate
 import {
   Search, CheckCircle, XCircle, Eye,
   Download, RefreshCw, AlertTriangle, Users,
-  ShieldAlert, ShieldCheck, ChevronDown, Edit2,
-, MessageCircle } from 'lucide-react';
+  ShieldAlert, ShieldCheck, ChevronDown, Edit2, MessageCircle,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const TABS = [
