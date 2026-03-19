@@ -12,6 +12,115 @@ const CONFIG_GROUPS = {
   'Liturgi':            ['gcatholic_url'],
 };
 
+// ─── Komponen: Quick Test Reset ──────────────────────────────
+function QuickTestReset({ members, genPassword, onReset }) {
+  const [selUser,  setSelUser]  = React.useState('');
+  const [tempPw,   setTempPw]   = React.useState('');
+  const [showPw,   setShowPw]   = React.useState(false);
+  const [loading,  setLoading]  = React.useState(false);
+  const [result,   setResult]   = React.useState(null); // {nickname, password, ok}
+
+  const user = members.find(m => m.id === selUser);
+
+  async function handleReset() {
+    if (!selUser || !tempPw) return;
+    setLoading(true);
+    setResult(null);
+    const res = await onReset(selUser, tempPw);
+    setResult({
+      nickname: user?.nickname,
+      nama:     user?.nama_panggilan,
+      password: tempPw,
+      ok:       res.ok,
+      error:    res.error,
+    });
+    setLoading(false);
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="grid sm:grid-cols-3 gap-3">
+        <div>
+          <label className="label text-xs">Pilih Anggota</label>
+          <select className="input text-sm" value={selUser}
+            onChange={e => { setSelUser(e.target.value); setResult(null); setTempPw(''); }}>
+            <option value="">— Pilih anggota —</option>
+            {members.map(m => (
+              <option key={m.id} value={m.id}>{m.nama_panggilan} (@{m.nickname})</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label text-xs">Password Test</label>
+          <div className="flex gap-2">
+            <input
+              type={showPw ? 'text' : 'password'}
+              className="input text-sm flex-1"
+              value={tempPw}
+              placeholder="Isi atau generate"
+              onChange={e => setTempPw(e.target.value)}
+            />
+            <button type="button" onClick={() => setShowPw(v => !v)}
+              className="btn-ghost px-2 text-xs text-gray-400">
+              {showPw ? 'Sem' : 'Lihat'}
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-col justify-end gap-2">
+          <button onClick={() => setTempPw(genPassword(8))} className="btn-outline btn-sm text-xs">
+            🎲 Generate
+          </button>
+          <button
+            onClick={handleReset}
+            disabled={loading || !selUser || !tempPw}
+            className="btn-primary btn-sm text-xs gap-1">
+            {loading ? '...' : '🔑 Set & Tampilkan'}
+          </button>
+        </div>
+      </div>
+
+      {result && (
+        <div className={`p-4 rounded-xl border-2 ${result.ok ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}>
+          {result.ok ? (
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-green-800">
+                ✅ Password berhasil di-set untuk <strong>{result.nama}</strong>
+              </p>
+              <div className="bg-white rounded-xl p-3 font-mono text-sm border border-green-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-gray-500 text-xs">username: </span>
+                    <span className="font-bold text-gray-900">{result.nickname}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">password: </span>
+                    <span className="font-bold text-brand-800 text-base">{result.password}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`username: ${result.nickname}
+password: ${result.password}`);
+                      toast.success('Disalin!');
+                    }}
+                    className="btn-outline btn-sm text-xs ml-3">
+                    Salin
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-green-600">
+                Gunakan kredensial di atas untuk test login di tab baru.
+                Setelah selesai, anggota wajib ganti password saat login.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-red-700">❌ Gagal: {result.error}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const { profile } = useAuth();
   const [configs, setConfigs]   = useState({});
@@ -369,14 +478,26 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
                         </td>
                         <td className="text-xs text-gray-500">{r.user.hp_ortu || r.user.hp_anak || '—'}</td>
                         <td>
-                          {(r.user.hp_ortu || r.user.hp_anak) ? (
-                            <button onClick={() => openWA(r.user, r.password)}
-                              className="btn-primary btn-sm gap-1 text-xs">
-                              <MessageCircle size={13}/> WA
+                          <div className="flex gap-1.5 flex-wrap">
+                            {(r.user.hp_ortu || r.user.hp_anak) ? (
+                              <button onClick={() => openWA(r.user, r.password)}
+                                className="btn-primary btn-sm gap-1 text-xs">
+                                <MessageCircle size={13}/> WA
+                              </button>
+                            ) : (
+                              <span className="text-xs text-orange-400">No HP</span>
+                            )}
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(
+                                  `username: ${r.user.nickname}\npassword: ${r.password}`
+                                );
+                                toast.success(`Disalin! User: ${r.user.nickname}`);
+                              }}
+                              className="btn-outline btn-sm text-xs">
+                              Salin
                             </button>
-                          ) : (
-                            <span className="text-xs text-orange-400">No HP kosong</span>
-                          )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -385,6 +506,33 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
               </div>
             </div>
           )}
+
+          {/* Quick Test: reset satu akun untuk test login */}
+          <div className="card space-y-3">
+            <h3 className="font-semibold text-gray-700 flex items-center gap-2 text-sm">
+              <Shield size={15} className="text-brand-800"/> Test Login — Reset Password Sementara
+            </h3>
+            <p className="text-xs text-gray-500">
+              Pilih anggota, generate password sementara, lalu gunakan untuk test login.
+              Password disimpan di layar saja — tidak dicatat di database sebagai plain text.
+            </p>
+            <QuickTestReset
+              members={pwUsers}
+              genPassword={genPassword}
+              onReset={async (userId, pw) => {
+                try {
+                  const { error } = await supabase.auth.admin.updateUserById(userId, { password: pw });
+                  if (error) throw error;
+                  return { ok: true };
+                } catch {
+                  const { error: rpcErr } = await supabase.rpc('admin_reset_password', {
+                    p_user_id: userId, p_new_password: pw
+                  });
+                  return { ok: !rpcErr, error: rpcErr?.message };
+                }
+              }}
+            />
+          </div>
 
           {/* Daftar semua anggota aktif */}
           <div className="card overflow-hidden p-0">
