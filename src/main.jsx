@@ -5,6 +5,14 @@ import { Toaster } from 'react-hot-toast';
 import App from './App.jsx';
 import './index.css';
 
+// ── Service Worker: unregister semua SW lama yang menyebabkan blank screen ──
+// Setelah deploy baru, SW lama bisa serve JS chunk yang sudah tidak ada.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    regs.forEach(reg => reg.unregister());
+  });
+}
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>

@@ -7,6 +7,7 @@ import {
   Settings, LogOut, Menu, X, Church, AlertTriangle,
   ClipboardList, RefreshCw,
 } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
 import { cn, truncate } from '../../lib/utils';
 import toast from 'react-hot-toast';
 
@@ -15,37 +16,40 @@ const PENG  = ['Administrator', 'Pengurus'];
 const ADMIN = ['Administrator'];
 
 const NAV_ITEMS = [
-  { icon: LayoutDashboard, label: 'Dashboard',        path: '/dashboard',       roles: null  },
-  { icon: Users,           label: 'Anggota',          path: '/anggota',         roles: STAFF },
-  { icon: Calendar,        label: 'Jadwal Mingguan',  path: '/jadwal-mingguan', roles: PENG  },
-  { icon: CalendarDays,    label: 'Misa Harian',      path: '/jadwal-harian',   roles: null  }, // semua bisa lihat
-  { icon: QrCode,          label: 'Scan QR',          path: '/scan-qr',         roles: STAFF },
-  { icon: ClipboardList,   label: 'Riwayat Scan',     path: '/riwayat-scan',    roles: STAFF }, // Pelatih juga
-  { icon: ArrowLeftRight,  label: 'Tukar Jadwal',     path: '/tukar-jadwal',    roles: null  },
-  { icon: BarChart2,       label: 'Rekap & Poin',     path: '/rekap',           roles: null  },
-  { icon: Trophy,          label: 'Leaderboard',      path: '/leaderboard',     roles: null  },
-  { icon: CreditCard,      label: 'Kartu Anggota',    path: '/kartu',           roles: null  },
-  { icon: RefreshCw,       label: 'Daftar Ulang',     path: '/daftar-ulang',    roles: null  },
-  { icon: Database,        label: 'Migrasi Data',     path: '/migrasi',         roles: ADMIN },
-  { icon: Settings,        label: 'Admin & Config',   path: '/admin',           roles: ADMIN },
+  { icon: LayoutDashboard, label: 'Dashboard',       path: '/dashboard',       roles: null  },
+  { icon: Users,           label: 'Anggota',         path: '/anggota',         roles: STAFF },
+  { icon: Calendar,        label: 'Jadwal Mingguan', path: '/jadwal-mingguan', roles: PENG  },
+  { icon: CalendarDays,    label: 'Misa Harian',     path: '/jadwal-harian',   roles: null  },
+  { icon: QrCode,          label: 'Scan QR',         path: '/scan-qr',         roles: STAFF },
+  { icon: ClipboardList,   label: 'Riwayat Scan',    path: '/riwayat-scan',    roles: STAFF },
+  { icon: ArrowLeftRight,  label: 'Tukar Jadwal',    path: '/tukar-jadwal',    roles: null  },
+  { icon: BarChart2,       label: 'Rekap & Poin',    path: '/rekap',           roles: null  },
+  { icon: Trophy,          label: 'Leaderboard',     path: '/leaderboard',     roles: null  },
+  { icon: CreditCard,      label: 'Kartu Anggota',   path: '/kartu',           roles: null  },
+  { icon: RefreshCw,       label: 'Daftar Ulang',    path: '/daftar-ulang',    roles: null  },
+  { icon: Database,        label: 'Migrasi Data',    path: '/migrasi',         roles: ADMIN, configKey: 'migration_enabled' },
+  { icon: Settings,        label: 'Admin & Config',  path: '/admin',           roles: ADMIN },
 ];
 
 export default function Layout() {
-  const { profile, role, loading: authLoading, signOut, isAdmin } = useAuth();
+  const { profile, role, loading: authLoading, signOut } = useAuth();
   const navigate = useNavigate();
-  const [open,        setOpen]       = useState(false);
-  const [migEnabled,  setMigEnabled] = useState(true); // default tampil
+  const [open,       setOpen]      = useState(false);
+  const [hiddenKeys, setHiddenKeys]= useState({}); // { migration_enabled: false }
 
-  // Cek system_config: migration_enabled
-  // Admin bisa matikan via /admin → Config → migration_enabled = false
+  // Fetch config flags yang bisa sembunyikan menu
   useEffect(() => {
-    supabase.from('system_config')
-      .select('value')
-      .eq('key', 'migration_enabled')
-      .maybeSingle()
+    supabase
+      .from('system_config')
+      .select('key, value')
+      .in('key', ['migration_enabled'])
       .then(({ data }) => {
-        if (data && data.value === 'false') setMigEnabled(false);
-      });
+        if (!data) return;
+        const map = {};
+        data.forEach(row => { map[row.key] = row.value !== 'false'; });
+        setHiddenKeys(map);
+      })
+      .catch(() => {}); // silent fail — jangan crash sidebar
   }, []);
 
   async function handleSignOut() {
@@ -55,10 +59,10 @@ export default function Layout() {
   }
 
   function canSeeItem(item) {
-    // Sembunyikan Migrasi Data jika sudah dinonaktifkan via config
-    if (item.path === '/migrasi' && !migEnabled) return false;
+    // Cek config flag (misal migration_enabled = false → sembunyikan)
+    if (item.configKey && hiddenKeys[item.configKey] === false) return false;
     if (!item.roles) return true;
-    if (!role) return true;
+    if (!role) return true; // belum load profile → tampilkan semua dulu
     return item.roles.includes(role);
   }
 
@@ -70,7 +74,7 @@ export default function Layout() {
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 py-5 border-b border-brand-900/30">
         <div className="w-9 h-9 bg-white/15 rounded-xl flex items-center justify-center">
-          <Church size={18} className="text-white" />
+          <Church size={18} className="text-white"/>
         </div>
         <div>
           <div className="font-bold text-white text-lg leading-none">SIGMA</div>
@@ -78,12 +82,12 @@ export default function Layout() {
         </div>
       </div>
 
-      {/* Warning jika profile belum load */}
+      {/* Profile warning */}
       {!profile && !authLoading && (
         <div className="mx-3 mt-3 p-2 bg-yellow-500/20 rounded-lg flex items-start gap-2">
-          <AlertTriangle size={13} className="text-yellow-300 flex-shrink-0 mt-0.5" />
+          <AlertTriangle size={13} className="text-yellow-300 flex-shrink-0 mt-0.5"/>
           <p className="text-[10px] text-yellow-200 leading-tight">
-            Profil tidak ditemukan. Pastikan data admin sudah diinsert ke tabel users.
+            Profil tidak ditemukan. Hubungi administrator.
           </p>
         </div>
       )}
@@ -95,7 +99,7 @@ export default function Layout() {
             className={({ isActive }) =>
               cn('nav-item', isActive ? 'nav-item-active' : 'nav-item-inactive text-brand-100/80')
             }>
-            <item.icon size={17} />
+            <item.icon size={17}/>
             <span className="text-sm">{item.label}</span>
           </NavLink>
         ))}
@@ -109,10 +113,12 @@ export default function Layout() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-semibold text-white truncate">{truncate(displayName, 18)}</div>
-            <div className="text-[11px] text-brand-200">{role?.replace('_',' ') || 'Memuat...'}</div>
+            <div className="text-[11px] text-brand-200">{role?.replace('_', ' ') || 'Memuat...'}</div>
           </div>
-          <button onClick={handleSignOut} className="p-1.5 rounded-lg text-brand-200 hover:text-white hover:bg-white/10" title="Logout">
-            <LogOut size={15} />
+          <button onClick={handleSignOut}
+            className="p-1.5 rounded-lg text-brand-200 hover:text-white hover:bg-white/10"
+            title="Logout">
+            <LogOut size={15}/>
           </button>
         </div>
       </div>
@@ -121,35 +127,40 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen bg-gray-50">
+      {/* Desktop sidebar */}
       <aside className="hidden lg:flex w-60 flex-shrink-0 bg-brand-800 flex-col">
-        <SidebarContent />
+        <SidebarContent/>
       </aside>
 
+      {/* Mobile overlay */}
       {open && (
         <div className="lg:hidden fixed inset-0 z-50 flex">
-          <div className="fixed inset-0 bg-black/50" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 bg-black/50" onClick={() => setOpen(false)}/>
           <aside className="relative w-60 bg-brand-800 flex flex-col z-10">
-            <button onClick={() => setOpen(false)} className="absolute top-3 right-3 p-1.5 text-brand-200 hover:text-white">
-              <X size={20} />
+            <button onClick={() => setOpen(false)}
+              className="absolute top-3 right-3 p-1.5 text-brand-200 hover:text-white">
+              <X size={20}/>
             </button>
-            <SidebarContent />
+            <SidebarContent/>
           </aside>
         </div>
       )}
 
+      {/* Main */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="lg:hidden flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-200 shadow-sm">
-          <button onClick={() => setOpen(true)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-600">
-            <Menu size={20} />
+          <button onClick={() => setOpen(true)}
+            className="p-2 rounded-lg hover:bg-gray-100 text-gray-600">
+            <Menu size={20}/>
           </button>
           <div className="flex items-center gap-2">
-            <Church size={18} className="text-brand-800" />
+            <Church size={18} className="text-brand-800"/>
             <span className="font-bold text-brand-800">SIGMA</span>
           </div>
         </header>
         <main className="flex-1 overflow-y-auto">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
-            <Outlet />
+            <Outlet/>
           </div>
         </main>
       </div>
