@@ -215,14 +215,25 @@ export default function ScheduleWeeklyPage() {
   const [showWA,     setShowWA]     = useState(false);
   const [deleteConf, setDeleteConf] = useState(null);
   const [picOptions, setPicOptions] = useState([]);
-  const exportRef = useRef(null); // container hidden untuk PNG export
+  const exportRef    = useRef(null);
+  const [showAddMisa, setShowAddMisa] = useState(false);
+  const [addMisaForm, setAddMisaForm] = useState({
+    tipe:            'Misa_Khusus',    // 'Misa_Khusus' | 'Mingguan_HariRaya'
+    tanggal_tugas:   '',
+    tanggal_latihan: '',
+    perayaan:        '',
+    warna_liturgi:   'Putih',
+    jumlah_misa:     1,
+  });
 
   // ── Load events ────────────────────────────────────────────
   const loadEvents = useCallback(async () => {
     setLoading(true);
-    const padM  = String(month).padStart(2,'0');
-    const start = `${year}-${padM}-01`;
-    const end   = `${year}-${padM}-31`;
+    const padM    = String(month).padStart(2,'0');
+    const start   = `${year}-${padM}-01`;
+    // Hari terakhir bulan yang benar (hindari 2026-04-31 dll)
+    const lastDay = new Date(year, month, 0).getDate(); // month=0-indexed+1 → hari terakhir
+    const end     = `${year}-${padM}-${String(lastDay).padStart(2,'0')}`;
     const { data, error } = await supabase
       .from('events')
       .select(`
@@ -361,6 +372,40 @@ export default function ScheduleWeeklyPage() {
     } finally {
       setGenerating(false);
     }
+  }
+
+  // ── Tambah Misa Khusus / Hari Raya ────────────────────────
+  async function addMisaKhusus() {
+    const f = addMisaForm;
+    if (!f.tanggal_tugas || !f.perayaan) {
+      toast.error('Tanggal dan nama perayaan wajib diisi'); return;
+    }
+
+    // Tipe:
+    // 'Misa_Khusus'       = Hari Raya stand-alone (tidak ada latihan mingguan)
+    // 'Mingguan_HariRaya' = Hari Raya yang menggantikan/ditambah ke weekend biasa
+    //                       (ada latihan Sabtu, ada slot Minggu juga)
+    const isMingguanHariRaya = f.tipe === 'Mingguan_HariRaya';
+
+    const { data: ev, error } = await supabase.from('events').insert({
+      nama_event:        f.perayaan.toUpperCase(),
+      tipe_event:        isMingguanHariRaya ? 'Mingguan' : 'Misa_Khusus',
+      tanggal_tugas:     f.tanggal_tugas,
+      tanggal_latihan:   isMingguanHariRaya ? f.tanggal_latihan : null,
+      perayaan:          f.perayaan,
+      warna_liturgi:     f.warna_liturgi,
+      jumlah_misa:       isMingguanHariRaya ? 4 : f.jumlah_misa,
+      status_event:      'Akan_Datang',
+      is_draft:          true,
+      gcatholic_fetched: false,
+    }).select().single();
+
+    if (error) { toast.error('Gagal tambah: ' + error.message); return; }
+
+    toast.success(`"${f.perayaan}" berhasil ditambahkan sebagai DRAFT!`);
+    setShowAddMisa(false);
+    setAddMisaForm({ tipe:'Misa_Khusus', tanggal_tugas:'', tanggal_latihan:'', perayaan:'', warna_liturgi:'Putih', jumlah_misa:1 });
+    loadEvents();
   }
 
   // ── Publish / Unpublish ────────────────────────────────────
@@ -515,6 +560,9 @@ export default function ScheduleWeeklyPage() {
           <button onClick={loadEvents} className="btn-ghost p-2"><RefreshCw size={16}/></button>
           <button onClick={generateSchedule} disabled={generating} className="btn-primary gap-2">
             <Zap size={16}/> {generating ? 'Generating...' : 'Generate Draft'}
+          </button>
+          <button onClick={() => setShowAddMisa(true)} className="btn-outline gap-2" title="Tambah Misa Khusus / Hari Raya">
+            <span className="text-lg leading-none">+</span> Misa Khusus
           </button>
         </div>
       </div>
@@ -715,6 +763,87 @@ export default function ScheduleWeeklyPage() {
             <div className="flex gap-2">
               <button onClick={()=>deleteEvent(deleteConf)} className="btn-danger flex-1">Hapus</button>
               <button onClick={()=>setDeleteConf(null)} className="btn-secondary">Batal</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tambah Misa Khusus Modal ── */}
+      {showAddMisa && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-bold text-lg">Tambah Misa Khusus / Hari Raya</h3>
+              <button onClick={() => setShowAddMisa(false)}><X size={20}/></button>
+            </div>
+
+            {/* Pilih tipe — 2 kondisi sederhana */}
+            <div className="mb-5">
+              <label className="label">Tipe Misa</label>
+              <div className="grid grid-cols-2 gap-3 mt-1">
+                <label className={`flex flex-col gap-1 p-3 rounded-xl border-2 cursor-pointer transition-all ${addMisaForm.tipe==='Misa_Khusus'?'border-brand-800 bg-brand-50':'border-gray-200'}`}>
+                  <input type="radio" name="tipe" value="Misa_Khusus" className="sr-only"
+                    checked={addMisaForm.tipe==='Misa_Khusus'}
+                    onChange={()=>setAddMisaForm(f=>({...f,tipe:'Misa_Khusus',tanggal_latihan:''}))} />
+                  <span className="font-semibold text-sm">Hari Raya Mandiri</span>
+                  <span className="text-xs text-gray-400">Misa sendiri, tidak ada latihan. Contoh: HR. Natal 25 Des, HR. Maria 1 Jan</span>
+                </label>
+                <label className={`flex flex-col gap-1 p-3 rounded-xl border-2 cursor-pointer transition-all ${addMisaForm.tipe==='Mingguan_HariRaya'?'border-brand-800 bg-brand-50':'border-gray-200'}`}>
+                  <input type="radio" name="tipe" value="Mingguan_HariRaya" className="sr-only"
+                    checked={addMisaForm.tipe==='Mingguan_HariRaya'}
+                    onChange={()=>setAddMisaForm(f=>({...f,tipe:'Mingguan_HariRaya',jumlah_misa:4}))} />
+                  <span className="font-semibold text-sm">Hari Raya + Mingguan</span>
+                  <span className="text-xs text-gray-400">Weekend ada misa biasa DAN hari raya. Ada latihan Sabtu + 4 slot Minggu</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="label">Nama Perayaan *</label>
+                <input className="input" value={addMisaForm.perayaan}
+                  placeholder="Contoh: HR. Santa Maria Bunda Allah"
+                  onChange={e=>setAddMisaForm(f=>({...f,perayaan:e.target.value}))} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">
+                    {addMisaForm.tipe==='Mingguan_HariRaya' ? 'Tanggal Misa (Minggu) *' : 'Tanggal Misa *'}
+                  </label>
+                  <input type="date" className="input" value={addMisaForm.tanggal_tugas}
+                    onChange={e=>setAddMisaForm(f=>({...f,tanggal_tugas:e.target.value}))} />
+                </div>
+                {addMisaForm.tipe==='Mingguan_HariRaya' && (
+                  <div>
+                    <label className="label">Tanggal Latihan (Sabtu)</label>
+                    <input type="date" className="input" value={addMisaForm.tanggal_latihan}
+                      onChange={e=>setAddMisaForm(f=>({...f,tanggal_latihan:e.target.value}))} />
+                  </div>
+                )}
+                {addMisaForm.tipe==='Misa_Khusus' && (
+                  <div>
+                    <label className="label">Jumlah Slot Misa</label>
+                    <select className="input" value={addMisaForm.jumlah_misa}
+                      onChange={e=>setAddMisaForm(f=>({...f,jumlah_misa:Number(e.target.value)}))}>
+                      {[1,2,3,4].map(n=><option key={n} value={n}>{n} slot</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="label">Warna Liturgi</label>
+                <select className="input" value={addMisaForm.warna_liturgi}
+                  onChange={e=>setAddMisaForm(f=>({...f,warna_liturgi:e.target.value}))}>
+                  {WARNA_OPTIONS.map(w=><option key={w}>{w}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex gap-2 mt-5">
+              <button onClick={addMisaKhusus} className="btn-primary flex-1 gap-2">
+                <Check size={16}/> Tambahkan sebagai Draft
+              </button>
+              <button onClick={()=>setShowAddMisa(false)} className="btn-secondary">Batal</button>
             </div>
           </div>
         </div>
