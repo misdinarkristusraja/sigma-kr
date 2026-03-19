@@ -221,6 +221,12 @@ export default function MigrationPage() {
         const to   = getCol(row, colMap.penukar);
         if (!from || !to) errs.push({ row: rowNum, msg: `Tertukar/Penukar kosong` });
       }
+      if (migType === 'jadwal') {
+        if (!getCol(row, colMap.tanggal))  errs.push({ row: rowNum, msg: 'Kolom Tanggal kosong' });
+        if (!getCol(row, colMap.perayaan)) errs.push({ row: rowNum, msg: 'Kolom Perayaan kosong' });
+        if (!getCol(row, colMap.slot))     errs.push({ row: rowNum, msg: 'Kolom Misa/Slot kosong' });
+        if (!getCol(row, colMap.nickname)) errs.push({ row: rowNum, msg: 'Kolom ID/Nickname kosong' });
+      }
     }
 
     setErrors(errs);

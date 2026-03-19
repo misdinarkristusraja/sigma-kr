@@ -7,7 +7,7 @@ import { toPng } from 'html-to-image';
 import {
   CalendarDays, Download, Zap, ChevronLeft, ChevronRight,
   Bell, CheckCircle, XCircle, Clock, RefreshCw, Users,
-  AlertTriangle, FileEdit, Globe, Check, X, Edit2, Search,
+  AlertTriangle, FileEdit, Globe, Check, X, Edit2, Search, Church,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -625,7 +625,6 @@ export function PublicSchedulePage() {
   );
 }
 
-import { Church } from 'lucide-react';
 export function NotFoundPage() {
   return (
     <div className="min-h-screen bg-brand-800 flex items-center justify-center text-white text-center p-6">
