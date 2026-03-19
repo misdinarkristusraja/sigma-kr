@@ -1,30 +1,29 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl  = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey  = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Fallback ke placeholder agar build Vercel tidak crash
+// ketika env vars belum diset saat CI/CD build check.
+// Di production, env vars WAJIB diset di Vercel Dashboard.
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder-key';
 
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error(
-    '❌ VITE_SUPABASE_URL dan VITE_SUPABASE_ANON_KEY wajib di-set di .env.local'
-  );
+if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+  console.warn('⚠️  Supabase env vars belum diset. Set di Vercel Dashboard → Settings → Environment Variables');
 }
 
 export const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: {
     autoRefreshToken: true,
-    persistSession: true,
+    persistSession:   true,
     detectSessionInUrl: true,
-    storage: window.localStorage,
   },
   global: {
     headers: { 'x-app-name': 'sigma-krsoba' },
   },
 });
 
-// Convenience helpers
 export const db = supabase;
 
-/** Upload file ke Supabase Storage dengan signed URL */
+/** Upload file ke Supabase Storage */
 export async function uploadFile(bucket, path, file) {
   const { data, error } = await supabase.storage
     .from(bucket)
@@ -35,10 +34,10 @@ export async function uploadFile(bucket, path, file) {
 }
 
 /** Ambil signed URL (expire 1 jam) */
-export async function getSignedUrl(bucket, path, expiresIn = 3600) {
+export async function getSignedUrl(bucket, filePath, expiresIn = 3600) {
   const { data, error } = await supabase.storage
     .from(bucket)
-    .createSignedUrl(path, expiresIn);
+    .createSignedUrl(filePath, expiresIn);
   if (error) throw error;
   return data.signedUrl;
 }
