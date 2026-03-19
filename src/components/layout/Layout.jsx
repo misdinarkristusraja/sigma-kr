@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Users, Calendar, CalendarDays, QrCode,
   ArrowLeftRight, BarChart2, Trophy, CreditCard, Database,
   Settings, LogOut, Menu, X, Church, AlertTriangle,
-  ClipboardList, RefreshCw,
+  ClipboardList, RefreshCw, PieChart,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { cn, truncate } from '../../lib/utils';
