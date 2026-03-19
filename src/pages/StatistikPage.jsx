@@ -35,6 +35,7 @@ export default function StatistikPage() {
       .from('users')
       .select('id, nickname, nama_panggilan, lingkungan, pendidikan, is_tarakanita, role, status')
       .in('status', ['Active', 'Retired'])
+      .in('role', ['Misdinar_Aktif','Misdinar_Retired'])
       .order('nama_panggilan');
 
     // 2. Rekap poin mingguan semua

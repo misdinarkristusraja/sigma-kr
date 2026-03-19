@@ -42,15 +42,15 @@ function dateCutoff(months) {
 }
 
 // ─── Kalkulasi rekap real-time ────────────────────────────
-// FIX: assignments di-query TANPA nested filter — filter manual di JS
-// supaya tidak ada false-negative dari Supabase join filter behaviour
 function buildRekap({ assignments, scans, dateFrom, dateTo }) {
   const weeks = {};
 
   // Tambahkan minggu dari assignments (dijadwalkan)
-  assignments.forEach(a => {
+  // Hanya proses jika assignments adalah array yang valid
+  (assignments || []).forEach(a => {
+    if (!a) return;
     const tgl = a.tanggal_tugas || a.tanggal_latihan;
-    if (!tgl) return;
+    if (!tgl || typeof tgl !== 'string') return;
     if (dateFrom && tgl < dateFrom) return;
     if (dateTo   && tgl > dateTo)   return;
     const ws = getWeekStartFromDate(tgl);
@@ -60,7 +60,8 @@ function buildRekap({ assignments, scans, dateFrom, dateTo }) {
   });
 
   // Tambahkan minggu dari scans (hadir)
-  scans.forEach(s => {
+  (scans || []).forEach(s => {
+    if (!s) return;
     const dateStr = s.timestamp?.split('T')[0];
     if (!dateStr) return;
     if (dateFrom && dateStr < dateFrom) return;
@@ -115,7 +116,9 @@ export default function RecapPage() {
   useEffect(() => {
     if (!isPengurus) return;
     supabase.from('users').select('id, nama_panggilan, lingkungan')
-      .eq('status','Active').order('nama_panggilan')
+      .eq('status','Active')
+      .in('role', ['Misdinar_Aktif','Misdinar_Retired'])
+      .order('nama_panggilan')
       .then(({ data }) => setMembers(data || []));
   }, [isPengurus]);
 
@@ -158,7 +161,9 @@ export default function RecapPage() {
     setAllLoad(true);
     const { data: members } = await supabase.from('users')
       .select('id, nama_panggilan, lingkungan, pendidikan')
-      .eq('status','Active').order('nama_panggilan');
+      .eq('status','Active')
+      .in('role', ['Misdinar_Aktif','Misdinar_Retired'])
+      .order('nama_panggilan');
     if (!members?.length) { setAllLoad(false); return; }
 
     const [{ data: allAssigns }, { data: allScans }] = await Promise.all([

@@ -162,7 +162,8 @@ export function ScheduleDailyPage() {
         .in('status', ['Bisa', 'Pas_Libur']);
       const { data: tarakanita } = await supabase.from('users')
         .select('id, nickname, nama_panggilan, lingkungan, pendidikan')
-        .eq('is_tarakanita', true).eq('status', 'Active').eq('is_suspended', false);
+        .eq('is_tarakanita', true).eq('status', 'Active').eq('is_suspended', false)
+        .in('role', ['Misdinar_Aktif','Misdinar_Retired']);
       const { data: optinUsers } = optins?.length
         ? await supabase.from('users')
             .select('id, nickname, nama_panggilan, lingkungan, pendidikan')

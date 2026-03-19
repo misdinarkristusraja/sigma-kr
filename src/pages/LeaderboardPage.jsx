@@ -109,7 +109,9 @@ export default function LeaderboardPage() {
       const [{ data: mems }, { data: asgs }, { data: scs }] = await Promise.all([
         supabase.from('users')
           .select('id, nama_panggilan, lingkungan, pendidikan')
-          .eq('status','Active').order('nama_panggilan'),
+          .eq('status','Active')
+          .in('role', ['Misdinar_Aktif','Misdinar_Retired'])
+          .order('nama_panggilan'),
         supabase.from('assignments')
           .select('user_id, events(tanggal_tugas, tanggal_latihan, tipe_event)')
           .not('events.tipe_event','eq','Misa_Harian'),
@@ -186,7 +188,7 @@ export default function LeaderboardPage() {
           </h1>
           <p className="page-subtitle">Real-time · {data.length} anggota aktif</p>
         </div>
-        <button onClick={() => setLoaded(false) || setTimeout(()=>setLoaded(true),100)}
+        <button onClick={() => { setLoaded(false); setTimeout(()=>setLoaded(true), 100); }}
           className="btn-ghost p-2"><RefreshCw size={16}/></button>
       </div>
 

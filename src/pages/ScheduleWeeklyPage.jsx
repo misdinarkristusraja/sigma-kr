@@ -295,12 +295,14 @@ export default function ScheduleWeeklyPage() {
         toast.loading(`✅ ${liturgyData.length} entri liturgi. Menghitung jadwal...`, { id: tid });
       }
 
-      // Pool anggota aktif
+      // Pool anggota aktif — HANYA Misdinar_Aktif dan Misdinar_Retired
+      // Admin/Pengurus/Pelatih TIDAK dijadwalkan
       const { data: pool, error: pErr } = await supabase
         .from('users')
         .select('id, nickname, nama_panggilan, pendidikan, lingkungan')
         .eq('status', 'Active')
-        .eq('is_suspended', false);
+        .eq('is_suspended', false)
+        .in('role', ['Misdinar_Aktif', 'Misdinar_Retired']);
       if (pErr) throw pErr;
       if (!pool?.length) throw new Error('Tidak ada anggota aktif');
 
@@ -791,6 +793,10 @@ export default function ScheduleWeeklyPage() {
             const asgn = ev.assignments || [];
             const bySlot = {};
             for (let s=1;s<=4;s++) bySlot[s] = asgn.filter(a=>a.slot_number===s);
+            // Disambiguasi nama panggilan yang sama dalam event ini
+            const nameTag = tagDuplicateNames(
+              asgn.map(a => a.users).filter(Boolean).map(u => ({ ...u, id: u.nickname || '' }))
+            );
 
             return (
               <div key={ev.id} className={`card border-l-4 ${ev.is_draft?'border-yellow-400 bg-yellow-50/20':'border-green-400'}`}>
