@@ -7,49 +7,32 @@ import toast from 'react-hot-toast';
 
 export default function ChangePasswordPage() {
   const { profile, fetchProfile, signOut } = useAuth();
-  const navigate  = useNavigate();
-  const [newPw,    setNewPw]    = useState('');
-  const [confirm,  setConfirm]  = useState('');
-  const [showPw,   setShowPw]   = useState(false);
-  const [loading,  setLoading]  = useState(false);
+  const navigate = useNavigate();
+  const [newPw,   setNewPw]   = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [showPw,  setShowPw]  = useState(false);
+  const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (newPw.length < 6)      { toast.error('Password minimal 6 karakter'); return; }
-    if (newPw !== confirm)     { toast.error('Konfirmasi password tidak cocok'); return; }
+    if (newPw.length < 6)  { toast.error('Password minimal 6 karakter'); return; }
+    if (newPw !== confirm) { toast.error('Konfirmasi tidak cocok'); return; }
 
     setLoading(true);
     try {
-      // Cara 1: updateUser langsung (butuh session valid)
-      const { error } = await supabase.auth.updateUser({ password: newPw });
+      // Gunakan RPC change_my_password — SECURITY DEFINER, bypass "User not allowed"
+      const { data, error } = await supabase.rpc('change_my_password', {
+        p_new_password: newPw,
+      });
 
-      if (error) {
-        // "User not allowed" → gunakan RPC sebagai fallback
-        if (error.message?.includes('not allowed') || error.message?.includes('weak')) {
-          const { error: rpcErr } = await supabase.rpc('admin_reset_password', {
-            p_user_id:     profile.id,
-            p_new_password: newPw,
-          });
-          if (rpcErr) throw new Error('Gagal ganti password: ' + rpcErr.message);
-        } else {
-          throw error;
-        }
-      }
+      if (error) throw new Error(error.message);
+      if (data?.ok === false) throw new Error(data.error || 'Gagal ganti password');
 
-      // Hapus flag must_change_password
-      await supabase.from('users').update({
-        must_change_password: false,
-        updated_at: new Date().toISOString(),
-      }).eq('id', profile.id);
+      toast.success('Password berhasil diperbarui! Login ulang dengan password baru. 🎉');
 
-      await fetchProfile();
-      toast.success('Password berhasil diperbarui! Silakan login ulang. 🎉');
-
-      // Logout dan redirect ke login agar session refresh dengan password baru
-      setTimeout(async () => {
-        await signOut();
-        navigate('/login');
-      }, 1500);
+      // Logout → session lama tidak valid lagi setelah password diganti
+      await signOut();
+      navigate('/login');
 
     } catch (err) {
       toast.error(err.message || 'Gagal ganti password. Hubungi admin.');
@@ -78,13 +61,16 @@ export default function ChangePasswordPage() {
             </div>
             <h1 className="text-xl font-bold text-gray-900">Buat Password Baru</h1>
             <p className="text-sm text-gray-500 mt-1">
-              Halo <strong>{profile?.nama_panggilan}</strong>! Buat password baru yang mudah kamu ingat.
+              Halo <strong>{profile?.nama_panggilan}</strong>!
+              Admin sudah mereset password kamu. Buat password baru sekarang.
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="label">Password Baru <span className="text-red-500">*</span></label>
+              <label className="label">
+                Password Baru <span className="text-red-500">*</span>
+              </label>
               <div className="relative">
                 <input
                   type={showPw ? 'text' : 'password'}
@@ -101,12 +87,13 @@ export default function ChangePasswordPage() {
                   {showPw ? <EyeOff size={16}/> : <Eye size={16}/>}
                 </button>
               </div>
-              {/* Strength bar */}
+
               {newPw && (
                 <div className="mt-2 space-y-1">
                   <div className="flex gap-1">
                     {strength.map((ok, i) => (
-                      <div key={i} className={`h-1 flex-1 rounded-full transition-all ${ok ? 'bg-brand-800' : 'bg-gray-200'}`}/>
+                      <div key={i}
+                        className={`h-1.5 flex-1 rounded-full transition-all ${ok ? 'bg-brand-800' : 'bg-gray-200'}`}/>
                     ))}
                   </div>
                   <p className={`text-xs font-medium ${strengthColor}`}>{strengthLabel}</p>
@@ -115,10 +102,15 @@ export default function ChangePasswordPage() {
             </div>
 
             <div>
-              <label className="label">Konfirmasi Password <span className="text-red-500">*</span></label>
+              <label className="label">
+                Konfirmasi Password <span className="text-red-500">*</span>
+              </label>
               <input
                 type={showPw ? 'text' : 'password'}
-                className={`input ${confirm && confirm !== newPw ? 'border-red-400' : confirm && confirm === newPw ? 'border-green-400' : ''}`}
+                className={`input ${
+                  confirm && confirm !== newPw ? 'border-red-400' :
+                  confirm && confirm === newPw ? 'border-green-400' : ''
+                }`}
                 placeholder="Ulangi password baru"
                 value={confirm}
                 onChange={e => setConfirm(e.target.value)}
@@ -139,7 +131,10 @@ export default function ChangePasswordPage() {
               className="btn-primary w-full btn-lg"
               disabled={loading || newPw !== confirm || newPw.length < 6}>
               {loading
-                ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> Menyimpan...</>
+                ? <span className="flex items-center justify-center gap-2">
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/>
+                    Menyimpan...
+                  </span>
                 : 'Simpan Password Baru'
               }
             </button>
