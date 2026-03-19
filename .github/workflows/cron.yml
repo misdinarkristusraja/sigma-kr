@@ -44,8 +44,9 @@ jobs:
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             "${SUPABASE_URL}/rest/v1/")
           echo "Ping status: $HTTP_STATUS"
-          if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "400" ]; then
-            echo "✅ Supabase aktif"
+          # 200, 400, 401 = server hidup (401 = butuh auth, tapi server jalan)
+          if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "400" ] || [ "$HTTP_STATUS" = "401" ]; then
+            echo "✅ Supabase aktif (status $HTTP_STATUS)"
           else
             echo "❌ Supabase tidak merespons: $HTTP_STATUS"
             exit 1
