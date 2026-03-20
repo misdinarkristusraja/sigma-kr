@@ -8,7 +8,7 @@ const KONDISI_INFO = {
   K2: { label: 'Walk-in + Latihan',          poin: '+3', color: 'bg-blue-100 text-blue-800',    dot: 'bg-blue-500'   },
   K3: { label: 'Dijadwal + Tugas saja',      poin: '+1', color: 'bg-yellow-100 text-yellow-800',dot: 'bg-yellow-500' },
   K4: { label: 'Walk-in saja',               poin: '+1', color: 'bg-orange-100 text-orange-800',dot: 'bg-orange-500' },
-  K5: { label: 'Dijadwal + Latihan saja',    poin:  '0', color: 'bg-teal-100 text-teal-800',    dot: 'bg-teal-500'   },
+  K5: { label: 'Dijadwal + Latihan saja',    poin: '+1', color: 'bg-teal-100 text-teal-800',    dot: 'bg-teal-500'   },
   K6: { label: 'Absen (tidak hadir)',        poin: '-1', color: 'bg-red-100 text-red-800',      dot: 'bg-red-500'    },
 };
 

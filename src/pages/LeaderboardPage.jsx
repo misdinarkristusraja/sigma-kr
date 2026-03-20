@@ -23,56 +23,64 @@ function getWeekStart(dateStr) {
 
 // ─── Hitung leaderboard mingguan real-time ────────────────
 function buildLeaderboard({ members, assigns, scans, swaps, dateFrom, dateTo }) {
-  // Group data per user
   const aMap = {}, sMap = {}, swMap = {};
   members.forEach(m => { aMap[m.id] = []; sMap[m.id] = []; swMap[m.id] = []; });
+
   assigns.filter(a => a.events).forEach(a => {
     if (aMap[a.user_id]) aMap[a.user_id].push({
-      event_id: a.event_id, assignment_id: a.id,
-      tanggal_tugas: a.events.tanggal_tugas, tanggal_latihan: a.events.tanggal_latihan,
+      event_id:        a.event_id,
+      assignment_id:   a.id,
+      tanggal_tugas:   a.events.tanggal_tugas,
+      tanggal_latihan: a.events.tanggal_latihan,
     });
   });
-  scans.forEach(s => { if (sMap[s.user_id]) sMap[s.user_id].push(s); });
+  scans.forEach(s  => { if (sMap[s.user_id]) sMap[s.user_id].push(s); });
   (swaps||[]).forEach(sw => { if (swMap[sw.requester_id]) swMap[sw.requester_id].push(sw); });
 
   return members.map(m => {
-    const weeks = {};
+    // ── Replicate exact buildRekap logic from RecapPage ────────
     const replacedIds = new Set(
-      swMap[m.id].filter(sw=>sw.status==='Replaced'&&sw.assignment_id).map(sw=>sw.assignment_id)
+      swMap[m.id].filter(sw => sw.status === 'Replaced' && sw.assignment_id)
+                 .map(sw => sw.assignment_id)
     );
     const activeEventIds = new Set(
-      aMap[m.id].filter(a=>!a.assignment_id||!replacedIds.has(a.assignment_id)).map(a=>a.event_id).filter(Boolean)
+      aMap[m.id]
+        .filter(a => !a.assignment_id || !replacedIds.has(a.assignment_id))
+        .map(a => a.event_id).filter(Boolean)
     );
 
-    const mkW = () => ({ is_dijadwalkan:false, is_hadir_tugas:false, is_hadir_latihan:false, is_walk_in:false });
+    const weeks = {};
+    const mkW = () => ({ is_dijadwalkan: false, is_hadir_tugas: false, is_hadir_latihan: false, is_walk_in: false });
 
-    // assignments → dijadwalkan (hanya yang tidak di-replace)
-    aMap[m.id].filter(a=>!a.assignment_id||!replacedIds.has(a.assignment_id)).forEach(a => {
+    // Pass 1 — dijadwalkan
+    aMap[m.id].filter(a => !a.assignment_id || !replacedIds.has(a.assignment_id)).forEach(a => {
       const tgl = a.tanggal_tugas || a.tanggal_latihan;
       if (!tgl || (dateFrom && tgl < dateFrom) || (dateTo && tgl > dateTo)) return;
-      const ws = getWeekStart(tgl);
-      if (!ws) return;
+      const ws = getWeekStart(tgl); if (!ws) return;
       if (!weeks[ws]) weeks[ws] = mkW();
       weeks[ws].is_dijadwalkan = true;
     });
 
-    // scans → hadir + walk-in detection
+    // Pass 2 — scan
     sMap[m.id].forEach(s => {
       const ds = s.timestamp?.split('T')[0];
       if (!ds || (dateFrom && ds < dateFrom) || (dateTo && ds > dateTo)) return;
-      const ws = getWeekStart(ds);
-      if (!ws) return;
+      const ws = getWeekStart(ds); if (!ws) return;
       if (!weeks[ws]) weeks[ws] = mkW();
       const t = s.scan_type;
-      if (t==='tugas'||t==='walkin_tugas')     weeks[ws].is_hadir_tugas=true;
-      if (t==='latihan'||t==='walkin_latihan') weeks[ws].is_hadir_latihan=true;
-      // Walk-in: scan ada tapi bukan bagian dari assignment aktif
-      if ((t==='tugas'||t==='walkin_tugas') &&
-          (t==='walkin_tugas' || !s.event_id || !activeEventIds.has(s.event_id))) {
+      if (t === 'tugas'   || t === 'walkin_tugas')   weeks[ws].is_hadir_tugas   = true;
+      if (t === 'latihan' || t === 'walkin_latihan')  weeks[ws].is_hadir_latihan = true;
+      // Walk-in: walkin_* type OR scan event not in active assignments
+      if (t === 'walkin_tugas' || t === 'walkin_latihan') {
+        weeks[ws].is_walk_in = true;
+      } else if ((t === 'tugas') && s.event_id && !activeEventIds.has(s.event_id)) {
+        weeks[ws].is_walk_in = true;
+      } else if (!s.event_id && !weeks[ws].is_dijadwalkan) {
         weeks[ws].is_walk_in = true;
       }
     });
 
+    // Pass 3 — poin
     let totalPoin = 0, hadirCount = 0, absenCount = 0;
     Object.values(weeks).forEach(w => {
       const { poin, kondisi } = hitungPoin(w);
@@ -84,7 +92,7 @@ function buildLeaderboard({ members, assigns, scans, swaps, dateFrom, dateTo }) 
     });
 
     return { ...m, totalPoin, hadirCount, absenCount, minggu: Object.keys(weeks).length };
-  }).sort((a,b) => b.totalPoin - a.totalPoin);
+  }).sort((a, b) => b.totalPoin - a.totalPoin);
 }
 
 // ─── Hitung leaderboard harian real-time ──────────────────

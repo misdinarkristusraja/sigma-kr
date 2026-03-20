@@ -216,7 +216,9 @@ export default function ScheduleWeeklyPage() {
   const [deleteConf, setDeleteConf] = useState(null);
   const [picOptions, setPicOptions] = useState([]);
   const exportRef    = useRef(null);
-  const [activeTab,  setActiveTab]  = useState('jadwal'); // 'jadwal' | 'pic'
+  const [activeTab,  setActiveTab]  = useState('jadwal'); // 'jadwal' | 'pic' | 'monitor'
+  const [monitorData, setMonitorData]= useState([]);   // priority monitor data
+  const [monitorLoad, setMonitorLoad]= useState(false);
   // Quick PIC state: { [eventId]: { slot: { a, b, hpA, hpB } } }
   const [picBatch,   setPicBatch]   = useState({});
   const [savingPIC,  setSavingPIC]  = useState(false);
@@ -631,6 +633,68 @@ export default function ScheduleWeeklyPage() {
   const draftCount = events.filter(e => e.is_draft).length;
   const pubCount   = events.filter(e => !e.is_draft).length;
 
+  async function loadMonitorData() {
+    setMonitorLoad(true);
+    const now = new Date();
+
+    // Pool aktif (sama seperti generate)
+    const { data: pool } = await supabase.from('users')
+      .select('id, nickname, nama_panggilan, pendidikan, lingkungan')
+      .eq('status', 'Active').eq('is_suspended', false)
+      .in('role', ['Misdinar_Aktif', 'Misdinar_Retired']);
+    if (!pool?.length) { setMonitorLoad(false); return; }
+
+    // Semua assignments 90 hari terakhir
+    const since90 = new Date(now - 90*24*3600*1000).toISOString().split('T')[0];
+    const { data: recent } = await supabase.from('assignments')
+      .select('user_id, slot_number, events(tanggal_tugas)')
+      .gte('events.tanggal_tugas', since90);
+
+    // Hitung per-user: berapa kali dapat jadwal & kapan terakhir
+    const countMap = {}, lastMap = {};
+    pool.forEach(u => { countMap[u.id] = 0; lastMap[u.id] = null; });
+    (recent||[]).filter(a => a.events).forEach(a => {
+      if (countMap[a.user_id] !== undefined) {
+        countMap[a.user_id]++;
+        const tgl = a.events.tanggal_tugas;
+        if (!lastMap[a.user_id] || tgl > lastMap[a.user_id]) lastMap[a.user_id] = tgl;
+      }
+    });
+
+    // Skor prioritas (makin lama = skor makin tinggi = prioritas lebih tinggi)
+    const scored = pool.map(u => {
+      const last     = lastMap[u.id];
+      const daysSince = last
+        ? Math.floor((now - new Date(last)) / 86400000)
+        : 999; // belum pernah → prioritas tertinggi
+      const count90  = countMap[u.id];
+      // Persentase probabilitas: normalized score 0-100
+      return { ...u, daysSince, count90, last, score: daysSince };
+    }).sort((a, b) => b.score - a.score);
+
+    // Hitung prioritas relatif (%)
+    const totalScore = scored.reduce((s, u) => s + u.score, 0);
+    const withPct    = scored.map(u => ({
+      ...u,
+      priorityPct: totalScore > 0 ? Math.round((u.score / totalScore) * 100 * 10) / 10 : 0,
+    }));
+
+    // Quota check: total slots per month
+    const targetMonth = { year: selectedYear, month: selectedMonth + 1 };
+    const weekendsInMonth = getWeekends(selectedYear, selectedMonth);
+    const totalSlotsMonth = weekendsInMonth.length * 4 * PETUGAS_PER_SLOT; // 4 slots × 8 petugas
+    const poolSize = pool.length;
+    const idealPerPerson = poolSize > 0 ? (totalSlotsMonth / poolSize).toFixed(1) : 0;
+
+    setMonitorData({ members: withPct, totalSlotsMonth, poolSize, idealPerPerson, weekendsInMonth: weekendsInMonth.length });
+    setMonitorLoad(false);
+  }
+
+  // Load monitor when tab switches
+  useEffect(() => {
+    if (activeTab === 'monitor') loadMonitorData();
+  }, [activeTab, selectedYear, selectedMonth]);
+
   return (
     <div className="space-y-5">
 
@@ -673,8 +737,9 @@ export default function ScheduleWeeklyPage() {
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
         {[
-          { key: 'jadwal', label: '📅 Jadwal' },
-          { key: 'pic',    label: `🙋 Kelola PIC${Object.keys(picBatch).length > 0 ? ` (${Object.keys(picBatch).length} pending)` : ''}` },
+          { key: 'jadwal',  label: '📅 Jadwal' },
+          { key: 'pic',     label: `🙋 Kelola PIC${Object.keys(picBatch).length > 0 ? ` (${Object.keys(picBatch).length} pending)` : ''}` },
+          { key: 'monitor', label: '📊 Prioritas & Kuota' },
         ].map(t => (
           <button key={t.key} onClick={() => setActiveTab(t.key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab===t.key?'bg-white text-brand-800 shadow-sm':'text-gray-500'}`}>
@@ -1171,6 +1236,142 @@ export default function ScheduleWeeklyPage() {
               <button onClick={()=>setShowWA(false)} className="btn-secondary">Tutup</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── TAB PRIORITAS & KUOTA ── */}
+      {activeTab === 'monitor' && (
+        <div className="space-y-5">
+          {/* Penjelasan rumus */}
+          <div className="card bg-blue-50 border border-blue-200 space-y-2">
+            <h3 className="font-bold text-blue-900 text-sm flex items-center gap-2">
+              📐 Cara Rumus Prioritas Bekerja
+            </h3>
+            <div className="text-xs text-blue-800 space-y-1 leading-relaxed">
+              <p><strong>Skor Prioritas</strong> = Jumlah hari sejak terakhir dijadwalkan (90 hari terakhir)</p>
+              <p>→ Semakin lama tidak mendapat jadwal = <strong>skor makin tinggi</strong> = dapat giliran lebih dulu</p>
+              <p>→ Belum pernah dijadwalkan = skor <strong>999</strong> (prioritas tertinggi)</p>
+              <p className="mt-1"><strong>Persentase Prioritas</strong> = Skor satu orang ÷ Total skor semua orang × 100%</p>
+              <p>→ Ini bukan jaminan pasti dapat jadwal, tapi <em>peluang relatif</em> dibanding anggota lain</p>
+            </div>
+            <div className="bg-blue-100 rounded-lg p-2 text-xs text-blue-900">
+              <strong>Contoh:</strong> Rafa tidak dapat jadwal 45 hari, Satrio 10 hari, Beni 999 (baru).
+              Total = 45+10+999 = 1054. Peluang Beni = 999/1054 ≈ 94.8%, Rafa = 4.3%, Satrio = 0.9%.
+            </div>
+          </div>
+
+          {/* Quota info */}
+          {monitorData?.idealPerPerson && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: 'Total Anggota Aktif',    val: monitorData.poolSize,           color: 'bg-brand-50' },
+                { label: 'Weekend bulan ini',       val: monitorData.weekendsInMonth + 'x', color: 'bg-green-50' },
+                { label: 'Total Slot bulan ini',    val: monitorData.totalSlotsMonth,    color: 'bg-blue-50' },
+                { label: 'Ideal per Orang/Bulan',   val: monitorData.idealPerPerson + 'x', color: 'bg-yellow-50' },
+              ].map(c => (
+                <div key={c.label} className={`card ${c.color} border-0 text-center`}>
+                  <div className="text-2xl font-black text-gray-800">{c.val}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{c.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Kuota warning */}
+          {monitorData?.idealPerPerson && (
+            <div className={`p-3 rounded-xl text-sm flex items-start gap-2 ${
+              monitorData.idealPerPerson < 1 ? 'bg-red-50 border border-red-200 text-red-800' :
+              monitorData.idealPerPerson > 4 ? 'bg-orange-50 border border-orange-200 text-orange-800' :
+              'bg-green-50 border border-green-200 text-green-800'
+            }`}>
+              <span className="text-lg">
+                {monitorData.idealPerPerson < 1 ? '⚠️' : monitorData.idealPerPerson > 4 ? '🔥' : '✅'}
+              </span>
+              <div>
+                <strong>Analisis Kuota:</strong>{' '}
+                {monitorData.idealPerPerson < 1
+                  ? `Pool anggota terlalu besar (${monitorData.poolSize} orang, slot hanya ${monitorData.totalSlotsMonth}). Sebagian besar tidak akan mendapat jadwal bulan ini.`
+                  : monitorData.idealPerPerson > 4
+                  ? `Pool anggota terlalu kecil (${monitorData.poolSize} orang, slot ${monitorData.totalSlotsMonth}). Setiap orang rata-rata ${monitorData.idealPerPerson}x per bulan — perlu rekrut lebih banyak misdinar.`
+                  : `Distribusi ideal: ${monitorData.poolSize} anggota untuk ${monitorData.totalSlotsMonth} slot → rata-rata ${monitorData.idealPerPerson}× per orang per bulan.`
+                }
+              </div>
+            </div>
+          )}
+
+          {/* Priority table */}
+          <div className="card overflow-hidden p-0">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="font-semibold text-gray-700">Daftar Prioritas Generate</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={loadMonitorData} disabled={monitorLoad} className="btn-ghost p-1.5">
+                  <RefreshCw size={14} className={monitorLoad ? 'animate-spin' : ''}/>
+                </button>
+                <span className="text-xs text-gray-400">
+                  Urutan = urutan generate jadwal berikutnya
+                </span>
+              </div>
+            </div>
+            {monitorLoad ? (
+              <div className="p-6 text-center text-gray-400">Menghitung prioritas...</div>
+            ) : (
+              <div className="overflow-x-auto max-h-[60vh]">
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th className="w-8">#</th>
+                      <th>Anggota</th>
+                      <th>Lingkungan</th>
+                      <th>Terakhir Dijadwalkan</th>
+                      <th>Hari Sejak</th>
+                      <th>Jadwal 90hr</th>
+                      <th>% Prioritas</th>
+                      <th>Prioritas Bar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(monitorData?.members || []).map((u, i) => {
+                      const pct = u.priorityPct || 0;
+                      const urgency = u.daysSince >= 60 ? 'text-red-600' : u.daysSince >= 30 ? 'text-orange-500' : 'text-green-600';
+                      return (
+                        <tr key={u.id} className={i < 8 ? 'bg-green-50/40' : ''}>
+                          <td className="text-gray-400 text-xs font-mono">
+                            {i + 1}
+                            {i < 8 && <span className="ml-1 text-green-600 text-[9px]">▶</span>}
+                          </td>
+                          <td>
+                            <div className="font-medium text-sm text-gray-900">{u.nama_panggilan}</div>
+                            <div className="text-xs text-gray-400">@{u.nickname}</div>
+                          </td>
+                          <td className="text-xs text-gray-500">{u.lingkungan}</td>
+                          <td className="text-xs text-gray-500">
+                            {u.last ? new Date(u.last).toLocaleDateString('id-ID', { day:'numeric', month:'short', year:'numeric' }) : <span className="text-blue-500 font-medium">Belum pernah</span>}
+                          </td>
+                          <td className={`font-bold text-sm ${urgency}`}>
+                            {u.daysSince >= 999 ? '∞' : u.daysSince + ' hr'}
+                          </td>
+                          <td className="text-center text-sm text-gray-600">{u.count90}×</td>
+                          <td className="font-bold text-sm text-brand-800">{pct}%</td>
+                          <td className="w-24">
+                            <div className="w-full bg-gray-100 rounded-full h-2">
+                              <div
+                                className={`h-2 rounded-full ${i < 8 ? 'bg-green-500' : 'bg-brand-400'}`}
+                                style={{ width: `${Math.min(pct * 3, 100)}%` }}
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-gray-400">
+            🟢 Baris hijau = 8 orang pertama yang akan mengisi slot pertama saat generate jadwal berikutnya.
+            Skor di-refresh otomatis setelah generate.
+          </p>
         </div>
       )}
     </div>

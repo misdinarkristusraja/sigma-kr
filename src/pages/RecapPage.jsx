@@ -11,7 +11,7 @@ const KONDISI_INFO = {
   K2: { label: 'Walk-in + Latihan',      short: 'Walk-in Aktif',  poin: '+3', color: 'bg-blue-100 text-blue-800',    bar: '#3b82f6' },
   K3: { label: 'Hadir Tugas (no Latih)', short: 'Hadir Tugas',    poin: '+1', color: 'bg-yellow-100 text-yellow-800',bar: '#eab308' },
   K4: { label: 'Walk-in saja',           short: 'Walk-in',        poin: '+1', color: 'bg-orange-100 text-orange-800',bar: '#f97316' },
-  K5: { label: 'Latihan (skip Tugas)',   short: 'Hadir Latihan',  poin:  '0', color: 'bg-teal-100 text-teal-800',    bar: '#14b8a6' },
+  K5: { label: 'Latihan (skip Tugas)',   short: 'Hadir Latihan',  poin: '+1', color: 'bg-teal-100 text-teal-800',    bar: '#14b8a6' },
   K6: { label: 'Absen',                  short: 'Absen',          poin: '-1', color: 'bg-red-100 text-red-800',      bar: '#ef4444' },
 };
 const MONTH_NAMES = ['','Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];

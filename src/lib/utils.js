@@ -170,7 +170,7 @@ export const STATUS_LABELS = {
  * K2 (+3): Walk-in (tidak dijadwalkan) + Hadir Latihan
  * K3 (+1): Dijadwalkan + Hadir Tugas + Tidak Latihan
  * K4 (+1): Walk-in (tidak dijadwalkan) + Tidak Latihan
- * K5 ( 0): Dijadwalkan + Tidak Tugas + Hadir Latihan  ← ada usaha
+ * K5 (+1): Dijadwalkan + Tidak Tugas + Hadir Latihan  ← datang latihan
  * K6 (-1): Dijadwalkan + Tidak Tugas + Tidak Latihan  ← absen total
  *
  * Jika tidak dijadwalkan DAN tidak ada scan sama sekali → null (tidak dihitung)
@@ -184,8 +184,8 @@ export function hitungPoin({ isDijadwalkan, isHadirTugas, isHadirLatihan, isWalk
   if (isDijadwalkan && isHadirTugas && !isHadirLatihan) return { poin:  1, kondisi: 'K3' };
   // K4: walk-in tapi tidak latihan
   if (!isDijadwalkan && isWalkIn && !isHadirLatihan)    return { poin:  1, kondisi: 'K4' };
-  // K5: dijadwalkan tapi tidak tugas, tapi hadir latihan (ada usaha)
-  if (isDijadwalkan && !isHadirTugas && isHadirLatihan) return { poin:  0, kondisi: 'K5' };
+  // K5: dijadwalkan tapi tidak tugas, tapi hadir latihan → +1 (ada usaha)
+  if (isDijadwalkan && !isHadirTugas && isHadirLatihan) return { poin:  1, kondisi: 'K5' };
   // K6: dijadwalkan tapi absen total (tidak tugas, tidak latihan)
   if (isDijadwalkan && !isHadirTugas && !isHadirLatihan)return { poin: -1, kondisi: 'K6' };
   // Tidak dijadwalkan & tidak ada scan → tidak dihitung
