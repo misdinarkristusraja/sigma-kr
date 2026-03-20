@@ -144,10 +144,9 @@ function buildExportHTML(ev, assignments) {
     const tglSlot = slot === 1 ? satTgl : sunTgl;
     const rowspan = Math.max(people.length, 1);
 
-    // HP display: gabungkan kalau berbeda
-    const hp = hpA && hpB && hpA !== hpB
-      ? `(${hpA} / ${hpB})`
-      : hpA ? `(${hpA})` : hpB ? `(${hpB})` : '';
+    // Show PIC 1 phone prominently (main contact)
+    const pic1Phone = hpA || '';
+    const hp = pic1Phone ? `HP: ${pic1Phone}` : '';
 
     const tanggalCell = `
       <td rowspan="${rowspan}" style="
@@ -157,8 +156,8 @@ function buildExportHTML(ev, assignments) {
         ${info.label.toUpperCase()}<br>
         ${tglSlot}<br>
         JAM (${info.jam})<br>
-        PIC: ${picA.toUpperCase()} &amp; ${picB.toUpperCase()}<br>
-        <span style="font-weight:normal;font-size:10px;">${hp}</span>
+        PIC: ${picA.toUpperCase()}${picB !== '—' ? ' &amp; ' + picB.toUpperCase() : ''}<br>
+        <span style="font-weight:normal;font-size:10px;color:#555;">${hp}</span>
       </td>`;
 
     if (people.length === 0) {
@@ -254,6 +253,7 @@ export default function ScheduleWeeklyPage() {
         perayaan, warna_liturgi, jumlah_misa, status_event, is_draft,
         published_at, draft_note,
         pic_slot_1a, pic_hp_slot_1a, pic_slot_1b, pic_hp_slot_1b,
+        pelatih_slot_1, pelatih_slot_2, pelatih_slot_3,
         pic_slot_2a, pic_hp_slot_2a, pic_slot_2b, pic_hp_slot_2b,
         pic_slot_3a, pic_hp_slot_3a, pic_slot_3b, pic_hp_slot_3b,
         pic_slot_4a, pic_hp_slot_4a, pic_slot_4b, pic_hp_slot_4b,
@@ -481,6 +481,37 @@ export default function ScheduleWeeklyPage() {
     loadEvents();
   }
 
+  // ── Simpan pelatih piket ──────────────────────────────────
+  async function savePelatihBatch() {
+    setSavingPelatih(true);
+    let saved = 0;
+    for (const [eventId, data] of Object.entries(pelatihBatch)) {
+      const { error } = await supabase.from('events').update({
+        pelatih_slot_1: data.p1 || null,
+        pelatih_slot_2: data.p2 || null,
+        pelatih_slot_3: data.p3 || null,
+      }).eq('id', eventId);
+      if (!error) saved++;
+    }
+    await loadEvents();
+    setPelatihBatch({});
+    setSavingPelatih(false);
+    toast.success(`Pelatih piket disimpan untuk ${saved} jadwal!`);
+  }
+
+  function setPelatihField(eventId, pos, nick) {
+    setPelatihBatch(b => ({
+      ...b,
+      [eventId]: { ...(b[eventId] || {}), [`p${pos}`]: nick },
+    }));
+  }
+
+  function getPelatihField(ev, pos) {
+    const key = `p${pos}`;
+    if (pelatihBatch[ev.id]?.[key] !== undefined) return pelatihBatch[ev.id][key];
+    return ev[`pelatih_slot_${pos}`] || '';
+  }
+
   function setPICField(eventId, slot, pos, nick) {
     const found = picOptions.find(p => p.nickname === nick);
     const hp    = found ? (found.hp_anak || found.hp_ortu || '') : '';
@@ -681,14 +712,17 @@ export default function ScheduleWeeklyPage() {
     //   Setiap K5 (hadir latihan saja) = -2 hari (sudah ada effort)
     // Belum pernah dijadwalkan = 9999
 
-    // Ambil rekap K5/K6 per user
-    const since60 = new Date(now - 60*24*3600*1000).toISOString().split('T')[0];
+    // Ambil rekap K5/K6 per user — 30 hari terakhir yang VALID (tanggal_tugas sudah lewat)
+    const since30   = new Date(now - 30*24*3600*1000).toISOString().split('T')[0];
+    const todayStr2 = now.toISOString().split('T')[0];
     const { data: recentScans } = await supabase.from('scan_records')
       .select('user_id, scan_type, event_id, timestamp')
-      .gte('timestamp', since60 + 'T00:00:00');
+      .gte('timestamp', since30 + 'T00:00:00');
+    // Only past events (tanggal_tugas <= today) - future events don't count as absen
     const { data: recentAssigns } = await supabase.from('assignments')
       .select('user_id, event_id, events(tanggal_tugas)')
-      .gte('events.tanggal_tugas', since60);
+      .gte('events.tanggal_tugas', since30)
+      .lte('events.tanggal_tugas', todayStr2);
 
     // Compute K5/K6 counts per user (simple version)
     const k6Map = {}, k5Map = {};
@@ -836,9 +870,10 @@ export default function ScheduleWeeklyPage() {
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
         {[
-          { key: 'jadwal',  label: '📅 Jadwal' },
-          { key: 'pic',     label: `🙋 Kelola PIC${Object.keys(picBatch).length > 0 ? ` (${Object.keys(picBatch).length} pending)` : ''}` },
-          { key: 'monitor', label: '📊 Prioritas & Kuota' },
+          { key: 'jadwal',   label: '📅 Jadwal' },
+          { key: 'pic',      label: `🙋 PIC${Object.keys(picBatch).length > 0 ? ` (${Object.keys(picBatch).length})` : ''}` },
+          { key: 'pelatih',  label: '👨‍🏫 Pelatih Piket' },
+          { key: 'monitor',  label: '📊 Prioritas' },
         ].map(t => (
           <button key={t.key} onClick={() => setActiveTab(t.key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab===t.key?'bg-white text-brand-800 shadow-sm':'text-gray-500'}`}>
@@ -1339,6 +1374,65 @@ export default function ScheduleWeeklyPage() {
       )}
 
       {/* ── TAB PRIORITAS & KUOTA ── */}
+      {/* ── TAB PELATIH PIKET ── */}
+      {activeTab === 'pelatih' && (
+        <div className="space-y-4">
+          <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm text-teal-700 font-semibold">👨‍🏫 Kelola Pelatih Piket per Event</p>
+              <p className="text-xs text-teal-600 mt-0.5">Maksimal 3 pelatih per minggu. Akan tampil di kartu jadwal dan PNG export.</p>
+            </div>
+            <button onClick={savePelatihBatch} disabled={savingPelatih || Object.keys(pelatihBatch).length === 0}
+              className="btn-primary btn-sm gap-1 whitespace-nowrap transition-all hover:scale-105 active:scale-95">
+              {savingPelatih ? 'Menyimpan...' : `Simpan (${Object.keys(pelatihBatch).length})`}
+            </button>
+          </div>
+
+          {events.length === 0 ? (
+            <div className="card text-center py-10 text-gray-400">Belum ada jadwal bulan ini</div>
+          ) : events.map(ev => (
+            <div key={ev.id} className="card space-y-3">
+              <div className="flex items-center gap-2">
+                <div className={`w-3 h-3 rounded-full ${getLiturgyClass(ev.warna_liturgi).dot}`}/>
+                <h3 className="font-bold text-gray-900">{ev.perayaan || ev.nama_event}</h3>
+                <span className="text-xs text-gray-400">Sabtu {formatDate(ev.tanggal_latihan,'dd MMM')} — Minggu {formatDate(ev.tanggal_tugas,'dd MMM')}</span>
+                {ev.is_draft && <span className="badge-yellow text-xs">Draft</span>}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {[1, 2, 3].map(pos => (
+                  <div key={pos}>
+                    <label className="label text-xs">Pelatih {pos}{pos === 1 ? ' *' : ' (opsional)'}</label>
+                    <select
+                      className={`input text-sm ${getPelatihField(ev, pos) ? 'border-teal-400 bg-teal-50' : ''}`}
+                      value={getPelatihField(ev, pos)}
+                      onChange={e => setPelatihField(ev.id, pos, e.target.value)}>
+                      <option value="">— Pilih Pelatih —</option>
+                      {picOptions.filter(u => u.role === 'Pelatih').map(u => (
+                        <option key={u.id} value={u.nickname}>{u.nama_panggilan}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              {/* Current pelatih display */}
+              {(ev.pelatih_slot_1 || ev.pelatih_slot_2 || ev.pelatih_slot_3) && (
+                <div className="flex gap-2 flex-wrap">
+                  <span className="text-xs text-gray-500">Tersimpan:</span>
+                  {[ev.pelatih_slot_1, ev.pelatih_slot_2, ev.pelatih_slot_3].filter(Boolean).map((p,i) => {
+                    const pelatih = picOptions.find(u => u.nickname === p);
+                    return (
+                      <span key={i} className="text-xs bg-teal-100 text-teal-800 px-2 py-0.5 rounded-lg font-medium">
+                        {pelatih?.nama_panggilan || p}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {activeTab === 'monitor' && (
         <div className="space-y-5">
           {/* Penjelasan rumus */}

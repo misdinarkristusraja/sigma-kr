@@ -359,11 +359,7 @@ export default function DashboardPage() {
                 <span className="text-sm font-medium text-gray-700">Kartu Anggota</span>
                 <ChevronRight size={16} className="ml-auto text-gray-400" />
               </Link>
-              <Link to="/leaderboard" className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors">
-                <Trophy size={18} className="text-brand-800" />
-                <span className="text-sm font-medium text-gray-700">Leaderboard</span>
-                <ChevronRight size={16} className="ml-auto text-gray-400" />
-              </Link>
+
             </div>
           </div>
 

@@ -131,19 +131,17 @@ export default function Layout() {
         <SidebarContent/>
       </aside>
 
-      {/* Mobile overlay */}
-      {open && (
-        <div className="lg:hidden fixed inset-0 z-50 flex">
-          <div className="fixed inset-0 bg-black/50" onClick={() => setOpen(false)}/>
-          <aside className="relative w-60 bg-brand-800 flex flex-col z-10">
-            <button onClick={() => setOpen(false)}
-              className="absolute top-3 right-3 p-1.5 text-brand-200 hover:text-white">
-              <X size={20}/>
-            </button>
-            <SidebarContent/>
-          </aside>
-        </div>
-      )}
+      {/* Mobile overlay — with slide-in animation */}
+      <div className={`lg:hidden fixed inset-0 z-50 flex transition-all duration-300 ${open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+        <div className="fixed inset-0 bg-black/50" onClick={() => setOpen(false)}/>
+        <aside className={`relative w-64 bg-brand-800 flex flex-col z-10 shadow-2xl transition-transform duration-300 ease-out ${open ? 'translate-x-0' : '-translate-x-full'}`}>
+          <button onClick={() => setOpen(false)}
+            className="absolute top-3 right-3 p-1.5 text-brand-200 hover:text-white transition-colors">
+            <X size={20}/>
+          </button>
+          <SidebarContent/>
+        </aside>
+      </div>
 
       {/* Main */}
       <div className="flex-1 flex flex-col overflow-hidden">

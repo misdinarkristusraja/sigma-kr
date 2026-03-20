@@ -80,7 +80,7 @@ async function drawCard(member, qrDataUrl, type) {
   }
   c.restore();
 
-  const QS = 105, QX = W - QS - 14, QY = (H - QS) / 2;
+  const QS = 100, QX = W - QS - 16, QY = Math.floor((H - QS) / 2) - 6;
 
   // QR background
   c.save();
@@ -137,32 +137,32 @@ async function drawCard(member, qrDataUrl, type) {
 
   // Name
   const name = truncate(titleCase(member.nama_panggilan || member.nickname), 18);
-  c.font = 'bold 19px Arial';
+  c.font = 'bold 18px Arial';
   c.fillStyle = txtMain;
-  c.fillText(name, LX, H - 55);
+  c.fillText(name, LX, H - 62);
 
   // Lingkungan
   c.font = '10.5px Arial';
   c.fillStyle = txtSub;
-  c.fillText(member.lingkungan || '', LX, H - 40);
+  c.fillText(member.lingkungan || '', LX, H - 47);
 
   // Instructions
   c.font = 'italic 8px Arial';
   c.fillStyle = txtSub;
   c.fillText(isTugas
     ? 'Tunjukkan kepada PIC saat bertugas'
-    : 'Tunjukkan kepada Pelatih saat latihan', LX, H - 20);
+    : 'Tunjukkan kepada Pelatih saat latihan', LX, H - 28);
 
   // Handle
   c.font = '7.5px Arial';
   c.fillStyle = txtFaint;
-  c.fillText('@misdinarkrsoba', LX, H - 9);
+  c.fillText('@misdinarkrsoba', LX, H - 16);
 
-  // Tagline under QR
-  c.font = 'italic 7px Arial';
+  // Tagline under QR — centered, with breathing room
+  c.font = 'italic 7.5px Arial';
   c.fillStyle = txtFaint;
   c.textAlign = 'center';
-  c.fillText('Serve Lord With Gladness', QX + QS/2, QY + QS + 11);
+  c.fillText('Serve Lord With Gladness', QX + QS/2, H - 8);
   c.textAlign = 'left';
 
   // Border outline

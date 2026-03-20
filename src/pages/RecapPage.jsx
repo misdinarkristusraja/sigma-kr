@@ -302,16 +302,32 @@ export default function RecapPage() {
       .order('nama_panggilan');
     if (!members?.length) { setAllLoad(false); return; }
 
-    const [{ data: allAssigns }, { data: allScans }, { data: allSwaps }] = await Promise.all([
-      // NO nested filter — filter in JS to avoid Supabase join filter bug
-      supabase.from('assignments')
-        .select('id, user_id, event_id, events(tanggal_tugas, tanggal_latihan, tipe_event, is_draft)'),
-      // Load ALL scans — let buildRekap filter by dateFrom/dateTo in JS
-      // Same as loadPersonal — this ensures consistent results
-      supabase.from('scan_records')
-        .select('user_id, scan_type, timestamp, is_walk_in, event_id'),
-      supabase.from('swap_requests')
-        .select('requester_id, assignment_id, status'),
+    // Supabase row limit = 1000. With many users, use range() to paginate.
+    const LIMIT = 1000;
+    
+    async function fetchAll(table, query) {
+      const rows = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await query(table).range(from, from + LIMIT - 1);
+        if (error || !data?.length) break;
+        rows.push(...data);
+        if (data.length < LIMIT) break;
+        from += LIMIT;
+      }
+      return rows;
+    }
+
+    const [allAssigns, allScans, allSwaps] = await Promise.all([
+      fetchAll('assignments', (t) => supabase.from(t)
+        .select('id, user_id, event_id, events(tanggal_tugas, tanggal_latihan, tipe_event, is_draft)')
+        .order('id')),
+      fetchAll('scan_records', (t) => supabase.from(t)
+        .select('user_id, scan_type, timestamp, is_walk_in, event_id')
+        .order('timestamp', { ascending: false })),
+      fetchAll('swap_requests', (t) => supabase.from(t)
+        .select('requester_id, assignment_id, status')
+        .order('id')),
     ]);
 
     // Group
@@ -691,20 +707,29 @@ export default function RecapPage() {
         </div>
       )}
 
-      {/* Formula reference */}
+      {/* K1-K6 Reference table */}
       <div className="card bg-gray-50">
-        <h3 className="font-semibold text-gray-700 mb-3 text-sm">📊 Keterangan Status Kehadiran</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <h3 className="font-semibold text-gray-700 mb-3 text-sm">📊 Keterangan Lengkap K1–K6</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {Object.entries(KONDISI_INFO).map(([k,v])=>(
-            <div key={k} className={`p-2.5 rounded-xl ${v.color} flex items-center justify-between gap-2`}>
-              <div>
-                <span className="font-bold text-xs">{v.short}</span>
-                <span className="ml-1.5 text-[10px] opacity-70">{v.label}</span>
+            <div key={k} className={`p-3 rounded-xl ${v.color} flex items-start gap-3`}>
+              <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-white/60 flex items-center justify-center">
+                <span className="font-black text-sm">{k}</span>
               </div>
-              <span className="font-black">{v.poin}</span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-sm">{v.short}</span>
+                  <span className="font-black text-base ml-2">{v.poin}</span>
+                </div>
+                <p className="text-[11px] opacity-80 mt-0.5 leading-snug">{v.label}</p>
+              </div>
             </div>
           ))}
         </div>
+        <p className="text-xs text-gray-400 mt-3 border-t border-gray-200 pt-3">
+          💡 Poin dihitung real-time dari data scan &amp; jadwal. K2 (Walk-in+Latihan) mendapat bonus tertinggi 
+          karena hadir tanpa kewajiban dan tetap melatih diri. K6 (Absen total) mendapat penalti.
+        </p>
       </div>
     </div>
   );

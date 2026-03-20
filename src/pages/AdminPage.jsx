@@ -320,11 +320,13 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
   }
 
   async function massResetAllPasswords() {
-    if (!confirm(`Reset password SEMUA ${users.length} anggota aktif? Setiap orang akan menerima password baru dan wajib menggantinya saat login.`)) return;
+    // Exclude Administrator accounts from mass reset
+    const targets = users.filter(u => u.status === 'Active' && u.role !== 'Administrator');
+    if (!confirm(`Reset password ${targets.length} anggota aktif (Admin TIDAK termasuk)?\nSetiap orang akan wajib ganti password saat login.`)) return;
     setMassLoad(true);
     setMassRes([]);
     const results = [];
-    for (const u of users) {
+    for (const u of targets) {
       const pw = genPassword(8);
       try {
         const { data, error } = await supabase.rpc('admin_reset_password', { p_user_id: u.id, p_new_password: pw });
@@ -338,7 +340,24 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     setMassRes(results);
     setMassLoad(false);
     const ok = results.filter(r=>r.ok).length;
-    toast.success(`${ok}/${results.length} password berhasil direset!`);
+    toast.success(`${ok}/${results.length} password berhasil direset! (Admin dilewati)`);
+    // Auto-download CSV
+    downloadMassResetCSV(results);
+  }
+
+  function downloadMassResetCSV(results) {
+    const rows = results.map(r => [
+      r.user.nickname, r.user.nama_panggilan, r.user.lingkungan,
+      r.password, r.ok ? 'Berhasil' : 'Gagal',
+      r.user.hp_ortu || r.user.hp_anak || '',
+    ]);
+    const header = 'Username,Nama,Lingkungan,Password Baru,Status,HP Ortu';
+    const csv = [header, ...rows.map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `reset-password-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
   }
 
   return (
@@ -411,9 +430,15 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
                 {massLoading ? 'Mereset...' : `🔑 Reset Semua (${users.filter(u=>u.status==='Active').length} anggota aktif)`}
               </button>
               {massResults.length > 0 && (
-                <span className="text-xs text-gray-500">
-                  ✅ {massResults.filter(r=>r.ok).length} berhasil · ❌ {massResults.filter(r=>!r.ok).length} gagal
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500">
+                    ✅ {massResults.filter(r=>r.ok).length} berhasil · ❌ {massResults.filter(r=>!r.ok).length} gagal
+                  </span>
+                  <button onClick={() => downloadMassResetCSV(massResults)}
+                    className="btn-outline btn-sm gap-1 text-xs transition-all hover:scale-105">
+                    📥 Unduh CSV
+                  </button>
+                </div>
               )}
             </div>
             {massResults.length > 0 && (
