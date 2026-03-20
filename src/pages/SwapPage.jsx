@@ -598,8 +598,8 @@ export default function SwapPage() {
                 <button
                   onClick={() => {
                     if (!grupWA) { toast.error('Masukkan link grup WA dulu'); return; }
-                    const link = grupWA.startsWith('http') ? grupWA : `https://chat.whatsapp.com/${grupWA}`;
-                    window.open(`${link}`, '_blank');
+                    const link = grupWA.startsWith('http') ? grupWA : ('https://chat.whatsapp.com/' + grupWA);
+                    window.open(link, '_blank');
                     setTimeout(() => {
                       navigator.clipboard.writeText(waText);
                       toast.success('Link dibuka & teks disalin ke clipboard!');
