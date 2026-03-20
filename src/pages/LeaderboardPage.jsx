@@ -22,40 +22,55 @@ function getWeekStart(dateStr) {
 }
 
 // ─── Hitung leaderboard mingguan real-time ────────────────
-function buildLeaderboard({ members, assigns, scans, dateFrom, dateTo }) {
+function buildLeaderboard({ members, assigns, scans, swaps, dateFrom, dateTo }) {
   // Group data per user
-  const aMap = {}, sMap = {};
-  members.forEach(m => { aMap[m.id] = []; sMap[m.id] = []; });
+  const aMap = {}, sMap = {}, swMap = {};
+  members.forEach(m => { aMap[m.id] = []; sMap[m.id] = []; swMap[m.id] = []; });
   assigns.filter(a => a.events).forEach(a => {
-    if (aMap[a.user_id]) aMap[a.user_id].push(a.events);
+    if (aMap[a.user_id]) aMap[a.user_id].push({
+      event_id: a.event_id, assignment_id: a.id,
+      tanggal_tugas: a.events.tanggal_tugas, tanggal_latihan: a.events.tanggal_latihan,
+    });
   });
   scans.forEach(s => { if (sMap[s.user_id]) sMap[s.user_id].push(s); });
+  (swaps||[]).forEach(sw => { if (swMap[sw.requester_id]) swMap[sw.requester_id].push(sw); });
 
   return members.map(m => {
     const weeks = {};
+    const replacedIds = new Set(
+      swMap[m.id].filter(sw=>sw.status==='Replaced'&&sw.assignment_id).map(sw=>sw.assignment_id)
+    );
+    const activeEventIds = new Set(
+      aMap[m.id].filter(a=>!a.assignment_id||!replacedIds.has(a.assignment_id)).map(a=>a.event_id).filter(Boolean)
+    );
 
-    // assignments → dijadwalkan
-    aMap[m.id].forEach(ev => {
-      const tgl = ev.tanggal_tugas || ev.tanggal_latihan;
+    const mkW = () => ({ is_dijadwalkan:false, is_hadir_tugas:false, is_hadir_latihan:false, is_walk_in:false });
+
+    // assignments → dijadwalkan (hanya yang tidak di-replace)
+    aMap[m.id].filter(a=>!a.assignment_id||!replacedIds.has(a.assignment_id)).forEach(a => {
+      const tgl = a.tanggal_tugas || a.tanggal_latihan;
       if (!tgl || (dateFrom && tgl < dateFrom) || (dateTo && tgl > dateTo)) return;
       const ws = getWeekStart(tgl);
       if (!ws) return;
-      if (!weeks[ws]) weeks[ws] = { is_dijadwalkan:false, is_hadir_tugas:false, is_hadir_latihan:false, is_walk_in:false };
+      if (!weeks[ws]) weeks[ws] = mkW();
       weeks[ws].is_dijadwalkan = true;
     });
 
-    // scans → hadir
+    // scans → hadir + walk-in detection
     sMap[m.id].forEach(s => {
       const ds = s.timestamp?.split('T')[0];
       if (!ds || (dateFrom && ds < dateFrom) || (dateTo && ds > dateTo)) return;
       const ws = getWeekStart(ds);
       if (!ws) return;
-      if (!weeks[ws]) weeks[ws] = { is_dijadwalkan:false, is_hadir_tugas:false, is_hadir_latihan:false, is_walk_in:false };
+      if (!weeks[ws]) weeks[ws] = mkW();
       const t = s.scan_type;
-      if (t==='tugas')          { weeks[ws].is_hadir_tugas=true; }
-      if (t==='latihan')        { weeks[ws].is_hadir_latihan=true; }
-      if (t==='walkin_tugas')   { weeks[ws].is_hadir_tugas=true; weeks[ws].is_walk_in=true; }
-      if (t==='walkin_latihan') { weeks[ws].is_hadir_latihan=true; weeks[ws].is_walk_in=true; }
+      if (t==='tugas'||t==='walkin_tugas')     weeks[ws].is_hadir_tugas=true;
+      if (t==='latihan'||t==='walkin_latihan') weeks[ws].is_hadir_latihan=true;
+      // Walk-in: scan ada tapi bukan bagian dari assignment aktif
+      if ((t==='tugas'||t==='walkin_tugas') &&
+          (t==='walkin_tugas' || !s.event_id || !activeEventIds.has(s.event_id))) {
+        weeks[ws].is_walk_in = true;
+      }
     });
 
     let totalPoin = 0, hadirCount = 0, absenCount = 0;
@@ -102,26 +117,30 @@ export default function LeaderboardPage() {
   const [assigns,  setAssigns] = useState([]);
   const [scans,    setScans]   = useState([]);
   const [loaded,   setLoaded]  = useState(false);
+  const [swaps,    setSwaps]   = useState([]);
 
   // Load raw data once
   useEffect(() => {
     async function fetchRaw() {
-      const [{ data: mems }, { data: asgs }, { data: scs }] = await Promise.all([
+      const [{ data: mems }, { data: asgs }, { data: scs }, { data: swps }] = await Promise.all([
         supabase.from('users')
           .select('id, nama_panggilan, lingkungan, pendidikan')
           .eq('status','Active')
           .in('role', ['Misdinar_Aktif','Misdinar_Retired'])
           .order('nama_panggilan'),
         supabase.from('assignments')
-          .select('user_id, events(tanggal_tugas, tanggal_latihan, tipe_event)')
+          .select('id, user_id, event_id, events(tanggal_tugas, tanggal_latihan, tipe_event, is_draft)')
           .not('events.tipe_event','eq','Misa_Harian'),
         supabase.from('scan_records')
           .select('user_id, scan_type, timestamp, is_walk_in, event_id')
           .gte('timestamp', '2020-01-01T00:00:00'),
+        supabase.from('swap_requests')
+          .select('requester_id, assignment_id, status'),
       ]);
       setMembers(mems || []);
-      setAssigns((asgs||[]).filter(a => a.events));
+      setAssigns((asgs||[]).filter(a => a.events && !a.events.is_draft));
       setScans(scs || []);
+      setSwaps(swps || []);
       setLoaded(true);
     }
     fetchRaw();
@@ -133,7 +152,7 @@ export default function LeaderboardPage() {
     setLoading(true);
     setTimeout(() => { // micro async to allow loading indicator
       if (tab === 'mingguan') {
-        const lb = buildLeaderboard({ members, assigns, scans, dateFrom, dateTo });
+        const lb = buildLeaderboard({ members, assigns, scans, swaps, dateFrom, dateTo });
         setData(lb);
       } else {
         const lb = buildLeaderboardHarian({ members, scans, dateFrom, dateTo });

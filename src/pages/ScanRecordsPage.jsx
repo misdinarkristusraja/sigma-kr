@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatWIB, downloadCSV } from '../lib/utils';
-import { Search, Download, RefreshCw, AlertTriangle, CheckCircle, Filter } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { Search, Download, RefreshCw, AlertTriangle, CheckCircle, Filter, Edit2, Trash2, X, Save } from 'lucide-react';
 
 const SCAN_TYPE_LABELS = {
   tugas:          { label: 'Tugas',         color: 'badge-green' },
@@ -20,6 +21,8 @@ export default function ScanRecordsPage() {
   const [page,     setPage]     = useState(0);
   const [total,    setTotal]    = useState(0);
   const PAGE_SIZE = 50;
+  const [editRecord,  setEditRecord]  = useState(null);  // record being edited
+  const [editSaving,  setEditSaving]  = useState(false);
 
   const loadRecords = useCallback(async () => {
     setLoading(true);
@@ -99,6 +102,28 @@ export default function ScanRecordsPage() {
 
   const anomalyCount = records.filter(r => r.is_anomaly).length;
 
+  async function saveEdit() {
+    if (!editRecord) return;
+    setEditSaving(true);
+    const { error } = await supabase.from('scan_records').update({
+      scan_type:      editRecord.scan_type,
+      is_anomaly:     editRecord.is_anomaly,
+      anomaly_reason: editRecord.anomaly_reason || null,
+      walkin_reason:  editRecord.walkin_reason  || null,
+      is_walk_in:     editRecord.scan_type?.includes('walkin'),
+    }).eq('id', editRecord.id);
+    if (error) { toast.error('Gagal: ' + error.message); }
+    else       { toast.success('Scan record diperbarui'); setEditRecord(null); loadRecords(); }
+    setEditSaving(false);
+  }
+
+  async function deleteRecord(id, name) {
+    if (!confirm(`Hapus scan record untuk ${name}? Tidak bisa dibatalkan.`)) return;
+    const { error } = await supabase.from('scan_records').delete().eq('id', id);
+    if (error) { toast.error('Gagal hapus: ' + error.message); }
+    else       { toast.success('Dihapus'); loadRecords(); }
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -174,7 +199,7 @@ export default function ScanRecordsPage() {
               ) : filtered.map(r => {
                 const sl = SCAN_TYPE_LABELS[r.scan_type] || { label: r.scan_type, color: 'badge-gray' };
                 return (
-                  <tr key={r.id} className={r.is_anomaly ? 'bg-red-50' : ''}>
+                  <tr key={r.id} className={r.is_anomaly ? 'bg-red-50' : editRecord?.id === r.id ? 'bg-blue-50' : ''}>
                     <td className="text-xs text-gray-500 whitespace-nowrap">{formatWIB(r.timestamp, 'dd/MM HH:mm')}</td>
                     <td>
                       <div className="font-semibold text-gray-900 text-sm">{r.user?.nama_panggilan || '?'}</div>
@@ -199,6 +224,20 @@ export default function ScanRecordsPage() {
                         : <span className="flex items-center gap-1 text-xs text-green-600"><CheckCircle size={12} /> OK</span>
                       }
                     </td>
+                    {isPengurus && (
+                      <td>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => setEditRecord({ ...r })}
+                            className="btn-ghost p-1 text-blue-500 hover:bg-blue-50" title="Edit scan record">
+                            <Edit2 size={13}/>
+                          </button>
+                          <button onClick={() => deleteRecord(r.id, r.user?.nama_panggilan)}
+                            className="btn-ghost p-1 text-red-400 hover:bg-red-50" title="Hapus">
+                            <Trash2 size={13}/>
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -219,6 +258,68 @@ export default function ScanRecordsPage() {
           </div>
         )}
       </div>
+      {/* ── Edit Scan Record Modal ─────────────────────── */}
+      {editRecord && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-gray-900">Edit Scan Record</h3>
+              <button onClick={() => setEditRecord(null)} className="btn-ghost p-1"><X size={18}/></button>
+            </div>
+
+            {/* Info */}
+            <div className="bg-gray-50 rounded-xl p-3 mb-4 text-sm">
+              <p><strong>Anggota:</strong> {editRecord.user?.nama_panggilan} (@{editRecord.user?.nickname})</p>
+              <p><strong>Waktu:</strong> {new Date(editRecord.timestamp).toLocaleString('id-ID')}</p>
+              <p><strong>Event:</strong> {editRecord.event?.perayaan || '—'}</p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="label text-xs">Tipe Scan</label>
+                <select className="input" value={editRecord.scan_type}
+                  onChange={e => setEditRecord(r => ({...r, scan_type: e.target.value, is_walk_in: e.target.value.includes('walkin')}))}>
+                  <option value="tugas">Tugas</option>
+                  <option value="latihan">Latihan</option>
+                  <option value="walkin_tugas">Walk-in Tugas</option>
+                  <option value="walkin_latihan">Walk-in Latihan</option>
+                </select>
+              </div>
+              <div>
+                <label className="label text-xs">Alasan Walk-in (opsional)</label>
+                <input className="input" value={editRecord.walkin_reason || ''}
+                  placeholder="Menggantikan / Sukarela / Lainnya"
+                  onChange={e => setEditRecord(r => ({...r, walkin_reason: e.target.value}))}/>
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={editRecord.is_anomaly}
+                    onChange={e => setEditRecord(r => ({...r, is_anomaly: e.target.checked}))}/>
+                  <span className="text-sm">Tandai sebagai anomali</span>
+                </label>
+              </div>
+              {editRecord.is_anomaly && (
+                <div>
+                  <label className="label text-xs">Alasan Anomali</label>
+                  <input className="input" value={editRecord.anomaly_reason || ''}
+                    placeholder="Misal: MyID tidak cocok, Scan di luar jadwal..."
+                    onChange={e => setEditRecord(r => ({...r, anomaly_reason: e.target.value}))}/>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 mt-5">
+              <button onClick={saveEdit} disabled={editSaving}
+                className="btn-primary flex-1 gap-2">
+                <Save size={15}/> {editSaving ? 'Menyimpan...' : 'Simpan Perubahan'}
+              </button>
+              <button onClick={() => setEditRecord(null)} className="btn-secondary flex-1">
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

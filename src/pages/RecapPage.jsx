@@ -47,7 +47,12 @@ function dateCutoff(months) {
 // Tugas = berapa kali scan tugas valid  
 // Tukar = berapa kali mengajukan swap
 function buildRawRekap({ assignments, scans, swaps, dateFrom, dateTo }) {
+  // Jadwal = assignments yang BELUM di-replace
+  const replacedIds = new Set(
+    (swaps||[]).filter(sw=>sw.status==='Replaced'&&sw.assignment_id).map(sw=>sw.assignment_id)
+  );
   const jadwal  = (assignments||[]).filter(a => {
+    if (a.assignment_id && replacedIds.has(a.assignment_id)) return false;
     const tgl = a.tanggal_tugas || a.tanggal_latihan;
     if (!tgl) return false;
     if (dateFrom && tgl < dateFrom) return false;
@@ -79,24 +84,69 @@ function buildRawRekap({ assignments, scans, swaps, dateFrom, dateTo }) {
 }
 
 // ─── Kalkulasi rekap real-time (K1-K6 poin) ──────────────
-function buildRekap({ assignments, scans, dateFrom, dateTo }) {
+/**
+ * buildRekap — kalkulasi real-time K1-K6 per minggu
+ *
+ * Logika urutan (sesuai request):
+ * 1. Cek apakah user ada di assignments event minggu itu → isDijadwalkan
+ * 2. Cek apakah assignment-nya sudah di-swap (replaced) → jika ya, bukan dijadwalkan
+ * 3. Cek apakah ada scan tugas minggu itu → isHadirTugas
+ * 4. Cek apakah ada scan latihan minggu itu → isHadirLatihan
+ * 5. Walk-in: hadir tugas/latihan TAPI tidak ada di assignments → isWalkIn
+ * 6. Apply hitungPoin K1-K6
+ *
+ * @param assignments  array { event_id, assignment_id, tanggal_tugas, tanggal_latihan }
+ * @param scans        array { scan_type, timestamp, event_id }
+ * @param swaps        array { assignment_id, status } — status 'Replaced' = user ditukar keluar
+ * @param dateFrom     string YYYY-MM-DD filter mulai
+ * @param dateTo       string YYYY-MM-DD filter akhir
+ */
+function buildRekap({ assignments, scans, swaps, dateFrom, dateTo }) {
+  // ── Set event_id yang sudah di-swap keluar ───────────────
+  // Jika swap.status = 'Replaced' & swap.assignment_id matches → user sudah digantikan
+  const replacedAssignmentIds = new Set(
+    (swaps || [])
+      .filter(sw => sw.status === 'Replaced' && sw.assignment_id)
+      .map(sw => sw.assignment_id)
+  );
+
+  // ── Set event_id yang user memang dijadwalkan (belum ditukar) ──
+  const activeAssignmentEventIds = new Set();
+  const assignmentByEventId = {};   // event_id → { tanggal_tugas, tanggal_latihan, assignment_id }
+
+  (assignments || []).forEach(a => {
+    if (!a || !a.event_id) return;
+    // Skip jika assignment ini sudah di-replace
+    if (a.assignment_id && replacedAssignmentIds.has(a.assignment_id)) return;
+    activeAssignmentEventIds.add(a.event_id);
+    assignmentByEventId[a.event_id] = a;
+  });
+
+  // ── Build weeks dari assignments aktif ──────────────────
   const weeks = {};
 
-  // Tambahkan minggu dari assignments (dijadwalkan)
-  // Hanya proses jika assignments adalah array yang valid
-  (assignments || []).forEach(a => {
-    if (!a) return;
+  const mkWeek = (ws) => ({
+    week_start:       ws,
+    week_end:         getWeekEndFromStart(ws),
+    is_dijadwalkan:   false,
+    is_hadir_tugas:   false,
+    is_hadir_latihan: false,
+    is_walk_in:       false,
+  });
+
+  // Pass 1 — minggu dari assignments yang aktif (tidak di-replace)
+  Object.values(assignmentByEventId).forEach(a => {
     const tgl = a.tanggal_tugas || a.tanggal_latihan;
     if (!tgl || typeof tgl !== 'string') return;
     if (dateFrom && tgl < dateFrom) return;
     if (dateTo   && tgl > dateTo)   return;
     const ws = getWeekStartFromDate(tgl);
     if (!ws) return;
-    if (!weeks[ws]) weeks[ws] = { week_start: ws, week_end: getWeekEndFromStart(ws), is_dijadwalkan: false, is_hadir_tugas: false, is_hadir_latihan: false, is_walk_in: false };
+    if (!weeks[ws]) weeks[ws] = mkWeek(ws);
     weeks[ws].is_dijadwalkan = true;
   });
 
-  // Tambahkan minggu dari scans (hadir)
+  // Pass 2 — scan records
   (scans || []).forEach(s => {
     if (!s) return;
     const dateStr = s.timestamp?.split('T')[0];
@@ -105,15 +155,30 @@ function buildRekap({ assignments, scans, dateFrom, dateTo }) {
     if (dateTo   && dateStr > dateTo)   return;
     const ws = getWeekStartFromDate(dateStr);
     if (!ws) return;
-    if (!weeks[ws]) weeks[ws] = { week_start: ws, week_end: getWeekEndFromStart(ws), is_dijadwalkan: false, is_hadir_tugas: false, is_hadir_latihan: false, is_walk_in: false };
-    const type = s.scan_type;
-    if (type === 'tugas')          { weeks[ws].is_hadir_tugas   = true; }
-    if (type === 'latihan')        { weeks[ws].is_hadir_latihan = true; }
-    if (type === 'walkin_tugas')   { weeks[ws].is_hadir_tugas   = true; weeks[ws].is_walk_in = true; }
-    if (type === 'walkin_latihan') { weeks[ws].is_hadir_latihan = true; weeks[ws].is_walk_in = true; }
+    if (!weeks[ws]) weeks[ws] = mkWeek(ws);
+
+    const t = s.scan_type;
+    const isTugas   = t === 'tugas'   || t === 'walkin_tugas';
+    const isLatihan = t === 'latihan' || t === 'walkin_latihan';
+
+    if (isLatihan) weeks[ws].is_hadir_latihan = true;
+    if (isTugas)   weeks[ws].is_hadir_tugas   = true;
+
+    // ── Walk-in detection ───────────────────────────────
+    // Walk-in = hadir tugas/latihan TAPI event_id scan tidak ada di assignments aktif
+    // ATAU scan_type sudah walkin_* (manual override scanner)
+    if (t === 'walkin_tugas' || t === 'walkin_latihan') {
+      weeks[ws].is_walk_in = true;
+    } else if (s.event_id && !activeAssignmentEventIds.has(s.event_id)) {
+      // Punya scan di event ini tapi TIDAK ada di assignment event ini → walk-in
+      weeks[ws].is_walk_in = true;
+    } else if (!s.event_id && !weeks[ws].is_dijadwalkan) {
+      // Scan tanpa event_id dan minggu ini tidak dijadwalkan → walk-in
+      weeks[ws].is_walk_in = true;
+    }
   });
 
-  // Hitung poin & kondisi, filter out null
+  // Pass 3 — hitung K1-K6
   return Object.values(weeks)
     .map(w => {
       const { poin, kondisi } = hitungPoin({
@@ -124,7 +189,7 @@ function buildRekap({ assignments, scans, dateFrom, dateTo }) {
       });
       return { ...w, poin, kondisi };
     })
-    .filter(w => w.kondisi !== null)  // Hanya minggu yang ada aktivitas bermakna
+    .filter(w => w.kondisi !== null)
     .sort((a, b) => b.week_start.localeCompare(a.week_start));
 }
 
@@ -166,32 +231,49 @@ export default function RecapPage() {
     if (!uid) return;
     setLoading(true);
 
-    // PENTING: ambil assignments TANPA nested filter tanggal
-    // lalu filter manual di JS → tidak ada false-negative
-    const [{ data: assigns }, { data: scans }] = await Promise.all([
+    // Ambil semua data yang dibutuhkan sekaligus
+    const [{ data: assigns }, { data: scans }, { data: swapsData }, { data: userProfile }] = await Promise.all([
+      // assignments: include id (assignment_id) + event dates
       supabase.from('assignments')
-        .select('event_id, events(tanggal_tugas, tanggal_latihan, tipe_event, status_event)')
+        .select('id, event_id, events(tanggal_tugas, tanggal_latihan, tipe_event, is_draft)')
         .eq('user_id', uid),
+      // scans: include event_id untuk cross-reference walk-in
       supabase.from('scan_records')
         .select('scan_type, timestamp, is_walk_in, event_id')
         .eq('user_id', uid)
         .order('timestamp', { ascending: false }),
+      // swaps: assignment_id untuk tahu apakah assignment di-replace
+      supabase.from('swap_requests')
+        .select('assignment_id, status, created_at')
+        .eq('requester_id', uid),
+      // user role — untuk skip rekap jika admin/pengurus
+      supabase.from('users').select('role').eq('id', uid).single(),
     ]);
 
-    // Filter: hanya event non-Harian, status bukan draft
-    const filteredAssigns = (assigns || [])
-      .filter(a => a.events && a.events.tipe_event !== 'Misa_Harian')
-      .map(a => ({ tanggal_tugas: a.events.tanggal_tugas, tanggal_latihan: a.events.tanggal_latihan }));
+    // Skip rekap untuk staff (admin/pengurus/pelatih tidak punya rekap kehadiran)
+    const userRole = userProfile?.role || '';
+    const isStaff  = ['Administrator','Pengurus','Pelatih'].includes(userRole);
 
-    const rekap  = buildRekap({ assignments: filteredAssigns, scans: scans || [], dateFrom, dateTo });
+    // Filter: hanya event mingguan yang bukan draft
+    const filteredAssigns = (assigns || [])
+      .filter(a => a.events && a.events.tipe_event !== 'Misa_Harian' && !a.events.is_draft)
+      .map(a => ({
+        event_id:       a.event_id,
+        assignment_id:  a.id,         // ← penting untuk deteksi swap
+        tanggal_tugas:  a.events.tanggal_tugas,
+        tanggal_latihan:a.events.tanggal_latihan,
+      }));
+
+    const rekap  = isStaff ? [] : buildRekap({
+      assignments: filteredAssigns,
+      scans:       scans || [],
+      swaps:       swapsData || [],
+      dateFrom,
+      dateTo,
+    });
     const harian = buildRekapHarian(scans || [], dateFrom, dateTo);
 
     // Raw rekap counts (sesuai format Excel)
-    const { data: swapsData } = await supabase
-      .from('swap_requests')
-      .select('created_at, status')
-      .eq('requester_id', uid);
-    
     const raw = buildRawRekap({
       assignments: filteredAssigns,
       scans:       scans || [],
@@ -199,6 +281,7 @@ export default function RecapPage() {
       dateFrom,
       dateTo,
     });
+    if (isStaff) { setLoading(false); return; } // Staff tidak punya rekap
 
     setRekap(rekap);
     setHarian(harian);
@@ -219,25 +302,34 @@ export default function RecapPage() {
       .order('nama_panggilan');
     if (!members?.length) { setAllLoad(false); return; }
 
-    const [{ data: allAssigns }, { data: allScans }] = await Promise.all([
+    const [{ data: allAssigns }, { data: allScans }, { data: allSwaps }] = await Promise.all([
       supabase.from('assignments')
-        .select('user_id, events(tanggal_tugas, tanggal_latihan, tipe_event)')
+        .select('id, user_id, event_id, events(tanggal_tugas, tanggal_latihan, tipe_event, is_draft)')
         .not('events.tipe_event', 'eq', 'Misa_Harian'),
       supabase.from('scan_records')
         .select('user_id, scan_type, timestamp, is_walk_in, event_id')
         .gte('timestamp', (dateFrom || dateCutoff(3)) + 'T00:00:00'),
+      supabase.from('swap_requests')
+        .select('requester_id, assignment_id, status'),
     ]);
 
     // Group
     const aMap = {}, sMap = {};
-    members.forEach(m => { aMap[m.id] = []; sMap[m.id] = []; });
-    (allAssigns||[]).filter(a=>a.events).forEach(a => {
-      if (aMap[a.user_id]) aMap[a.user_id].push({ tanggal_tugas: a.events.tanggal_tugas, tanggal_latihan: a.events.tanggal_latihan });
+    const swapMap = {};
+    members.forEach(m => { aMap[m.id] = []; sMap[m.id] = []; swapMap[m.id] = []; });
+    (allSwaps||[]).forEach(sw => { if (swapMap[sw.requester_id]) swapMap[sw.requester_id].push(sw); });
+    (allAssigns||[]).filter(a=>a.events && !a.events.is_draft).forEach(a => {
+      if (aMap[a.user_id]) aMap[a.user_id].push({
+        event_id:        a.event_id,
+        assignment_id:   a.id,
+        tanggal_tugas:   a.events.tanggal_tugas,
+        tanggal_latihan: a.events.tanggal_latihan,
+      });
     });
     (allScans||[]).forEach(s => { if (sMap[s.user_id]) sMap[s.user_id].push(s); });
 
     const result = members.map(m => {
-      const rows  = buildRekap({ assignments: aMap[m.id], scans: sMap[m.id], dateFrom, dateTo });
+      const rows  = buildRekap({ assignments: aMap[m.id], scans: sMap[m.id], swaps: swapMap[m.id] || [], dateFrom, dateTo });
       const total = rows.reduce((s,r) => s+(r.poin||0), 0);
       const k6    = rows.filter(r => r.kondisi === 'K6').length;
       const hadir = rows.filter(r => r.is_hadir_tugas || r.is_hadir_latihan).length;
