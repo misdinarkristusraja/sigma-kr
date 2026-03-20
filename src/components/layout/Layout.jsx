@@ -3,7 +3,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   LayoutDashboard, Users, Calendar, CalendarDays, QrCode,
-  ArrowLeftRight, BarChart2, Trophy, CreditCard, Database,
+  ArrowLeftRight, BarChart2, CreditCard, Database,
   Settings, LogOut, Menu, X, Church, AlertTriangle,
   ClipboardList, RefreshCw, PieChart,
 } from 'lucide-react';
@@ -24,7 +24,6 @@ const NAV_ITEMS = [
   { icon: ClipboardList,   label: 'Riwayat Scan',    path: '/riwayat-scan',    roles: STAFF },
   { icon: ArrowLeftRight,  label: 'Tukar Jadwal',    path: '/tukar-jadwal',    roles: null  },
   { icon: BarChart2,       label: 'Rekap & Poin',    path: '/rekap',           roles: null  },
-  { icon: Trophy,          label: 'Leaderboard',     path: '/leaderboard',     roles: null  },
   { icon: CreditCard,      label: 'Kartu Anggota',   path: '/kartu',           roles: null  },
   { icon: RefreshCw,       label: 'Daftar Ulang',    path: '/daftar-ulang',    roles: null  },
   { icon: Database,        label: 'Migrasi Data',    path: '/migrasi',         roles: ADMIN, configKey: 'migration_enabled' },

@@ -303,12 +303,13 @@ export default function RecapPage() {
     if (!members?.length) { setAllLoad(false); return; }
 
     const [{ data: allAssigns }, { data: allScans }, { data: allSwaps }] = await Promise.all([
+      // NO nested filter — filter in JS to avoid Supabase join filter bug
       supabase.from('assignments')
-        .select('id, user_id, event_id, events(tanggal_tugas, tanggal_latihan, tipe_event, is_draft)')
-        .not('events.tipe_event', 'eq', 'Misa_Harian'),
+        .select('id, user_id, event_id, events(tanggal_tugas, tanggal_latihan, tipe_event, is_draft)'),
+      // Load ALL scans — let buildRekap filter by dateFrom/dateTo in JS
+      // Same as loadPersonal — this ensures consistent results
       supabase.from('scan_records')
-        .select('user_id, scan_type, timestamp, is_walk_in, event_id')
-        .gte('timestamp', (dateFrom || dateCutoff(3)) + 'T00:00:00'),
+        .select('user_id, scan_type, timestamp, is_walk_in, event_id'),
       supabase.from('swap_requests')
         .select('requester_id, assignment_id, status'),
     ]);
@@ -625,33 +626,61 @@ export default function RecapPage() {
       {/* ─── TAB ALL ─── */}
       {tab === 'all' && isPengurus && (
         <div className="card overflow-hidden p-0">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
             <h3 className="font-semibold text-gray-700">Rekap Semua Anggota</h3>
-            <button onClick={loadAll} className="btn-ghost p-1.5"><RefreshCw size={14}/></button>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400">{filteredAll.length} anggota</span>
+              <button onClick={loadAll} className="btn-ghost p-1.5" title="Refresh"><RefreshCw size={14}/></button>
+            </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="tbl">
+            <table className="tbl text-xs">
               <thead>
-                <tr><th>#</th><th>Nama</th><th>Lingkungan</th><th>Total Poin</th><th>Hadir</th><th>Absen</th><th>Minggu</th></tr>
+                <tr>
+                  <th className="w-8">#</th>
+                  <th>Nama</th>
+                  <th>Lingkungan</th>
+                  <th>Poin</th>
+                  <th title="Hadir Lengkap (K1)">K1</th>
+                  <th title="Walk-in+Latihan (K2)">K2</th>
+                  <th title="Hadir Tugas saja (K3)">K3</th>
+                  <th title="Walk-in saja (K4)">K4</th>
+                  <th title="Latihan saja (K5)">K5</th>
+                  <th title="Absen (K6)" className="text-red-600">K6</th>
+                  <th>Hadir</th>
+                  <th>Minggu</th>
+                </tr>
               </thead>
               <tbody>
                 {allLoading ? (
-                  <tr><td colSpan={7} className="text-center py-8 text-gray-400">Menghitung...</td></tr>
-                ) : filteredAll.sort((a,b)=>b.totalPoin-a.totalPoin).map((m,i)=>(
-                  <tr key={m.id}>
-                    <td className="text-gray-400 text-xs">{i+1}</td>
-                    <td className="font-semibold text-gray-900">{m.nama_panggilan}</td>
-                    <td className="text-gray-500 text-xs">{m.lingkungan}</td>
-                    <td>
-                      <span className={`font-bold ${m.totalPoin>0?'text-green-600':m.totalPoin<0?'text-red-600':'text-gray-400'}`}>
-                        {m.totalPoin>0?'+':''}{m.totalPoin}
-                      </span>
-                    </td>
-                    <td className="text-center text-sm">{m.hadir}</td>
-                    <td className="text-center text-sm">{m.k6>0?<span className="text-red-600 font-bold">{m.k6}</span>:'—'}</td>
-                    <td className="text-center text-xs text-gray-400">{m.minggu}</td>
-                  </tr>
-                ))}
+                  <tr><td colSpan={12} className="text-center py-8 text-gray-400">Menghitung rekap semua anggota...</td></tr>
+                ) : filteredAll.sort((a,b)=>b.totalPoin-a.totalPoin).map((m,i)=>{
+                  // Compute K1-K6 counts from rows
+                  const kCounts = {};
+                  ['K1','K2','K3','K4','K5','K6'].forEach(k => {
+                    kCounts[k] = (m.rows||[]).filter(r=>r.kondisi===k).length;
+                  });
+                  return (
+                    <tr key={m.id}>
+                      <td className="text-gray-400 font-mono">{i+1}</td>
+                      <td className="font-semibold text-gray-900">{m.nama_panggilan}</td>
+                      <td className="text-gray-500">{m.lingkungan}</td>
+                      <td>
+                        <span className={`font-black text-sm ${m.totalPoin>0?'text-green-600':m.totalPoin<0?'text-red-600':'text-gray-400'}`}>
+                          {m.totalPoin>0?'+':''}{m.totalPoin}
+                        </span>
+                      </td>
+                      <td className="text-center">{kCounts.K1>0?<span className="text-green-600 font-bold">{kCounts.K1}</span>:'—'}</td>
+                      <td className="text-center">{kCounts.K2>0?<span className="text-blue-600 font-bold">{kCounts.K2}</span>:'—'}</td>
+                      <td className="text-center">{kCounts.K3>0?<span className="text-yellow-600 font-bold">{kCounts.K3}</span>:'—'}</td>
+                      <td className="text-center">{kCounts.K4>0?<span className="text-orange-500 font-bold">{kCounts.K4}</span>:'—'}</td>
+                      <td className="text-center">{kCounts.K5>0?<span className="text-teal-600 font-bold">{kCounts.K5}</span>:'—'}</td>
+                      <td className="text-center">{kCounts.K6>0?<span className="text-red-600 font-bold">{kCounts.K6}</span>:'—'}</td>
+                      <td className="text-center text-gray-600">{m.hadir}</td>
+                      <td className="text-center text-gray-400">{m.minggu}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

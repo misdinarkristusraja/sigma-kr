@@ -680,8 +680,8 @@ export default function ScheduleWeeklyPage() {
     }));
 
     // Quota check: total slots per month
-    const targetMonth = { year: selectedYear, month: selectedMonth + 1 };
-    const weekendsInMonth = getWeekends(selectedYear, selectedMonth);
+    const targetMonth = { year: year, month: month };
+    const weekendsInMonth = getWeekends(year, month);
     const totalSlotsMonth = weekendsInMonth.length * 4 * PETUGAS_PER_SLOT; // 4 slots × 8 petugas
     const poolSize = pool.length;
     const idealPerPerson = poolSize > 0 ? (totalSlotsMonth / poolSize).toFixed(1) : 0;
@@ -693,7 +693,7 @@ export default function ScheduleWeeklyPage() {
   // Load monitor when tab switches
   useEffect(() => {
     if (activeTab === 'monitor') loadMonitorData();
-  }, [activeTab, selectedYear, selectedMonth]);
+  }, [activeTab, year, month]);
 
   return (
     <div className="space-y-5">
