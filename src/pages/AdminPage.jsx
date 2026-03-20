@@ -493,6 +493,7 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
             </table>
           </div>
         </div>
+      </div>
       )}
 
       {/* Audit log tab */}

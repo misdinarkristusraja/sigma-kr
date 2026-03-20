@@ -44,6 +44,7 @@ export default function SwapPage() {
   // WA template grup
   const [showWA,  setShowWA]  = useState(false);
   const [waText,  setWaText]  = useState('');
+  const [grupWA,  setGrupWA]  = useState('');  // link grup WA
 
   const loadData = useCallback(async () => {
     if (!profile) return;
@@ -581,14 +582,48 @@ export default function SwapPage() {
               onChange={e => setWaText(e.target.value)}
             />
             <p className="text-xs text-gray-400 mt-1">Teks bisa diedit sebelum dikirim</p>
+            {/* Grup WA link */}
+            <div className="mt-3 space-y-2">
+              <label className="text-xs font-semibold text-gray-600">
+                Link Grup WhatsApp (opsional)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  className="input text-sm flex-1"
+                  placeholder="https://chat.whatsapp.com/XXXXX..."
+                  value={grupWA}
+                  onChange={e => setGrupWA(e.target.value)}
+                />
+                <button
+                  onClick={() => {
+                    if (!grupWA) { toast.error('Masukkan link grup WA dulu'); return; }
+                    const link = grupWA.startsWith('http') ? grupWA : `https://chat.whatsapp.com/${grupWA}`;
+                    window.open(`${link}`, '_blank');
+                    setTimeout(() => {
+                      navigator.clipboard.writeText(waText);
+                      toast.success('Link dibuka & teks disalin ke clipboard!');
+                    }, 500);
+                  }}
+                  className="btn-primary gap-2 whitespace-nowrap transition-all hover:scale-105 active:scale-95">
+                  <MessageSquare size={14}/> Kirim ke Grup
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-400">
+                💡 Klik "Kirim ke Grup" → grup terbuka di WhatsApp + teks otomatis disalin.
+                Paste (tempel) teks di grup WhatsApp. Link grup bisa didapat dari WhatsApp: 
+                Grup → Info Grup → Tautan Undangan.
+              </p>
+            </div>
             <div className="flex gap-2 mt-3">
               <button onClick={() => { navigator.clipboard.writeText(waText); toast.success('Disalin!'); }}
-                className="btn-primary flex-1 gap-2"><Copy size={15}/> Salin</button>
+                className="btn-outline flex-1 gap-2"><Copy size={15}/> Salin Teks</button>
               <button onClick={() => setShowWA(false)} className="btn-secondary">Tutup</button>
             </div>
           </div>
         </div>
       )}
     </div>
+  </div>
   );
 }
