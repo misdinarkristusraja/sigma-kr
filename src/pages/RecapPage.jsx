@@ -319,7 +319,8 @@ export default function RecapPage() {
     const swapMap = {};
     members.forEach(m => { aMap[m.id] = []; sMap[m.id] = []; swapMap[m.id] = []; });
     (allSwaps||[]).forEach(sw => { if (swapMap[sw.requester_id]) swapMap[sw.requester_id].push(sw); });
-    (allAssigns||[]).filter(a=>a.events && !a.events.is_draft).forEach(a => {
+    // Must match loadPersonal: filter out Misa_Harian AND drafts
+    (allAssigns||[]).filter(a=>a.events && !a.events.is_draft && a.events.tipe_event !== 'Misa_Harian').forEach(a => {
       if (aMap[a.user_id]) aMap[a.user_id].push({
         event_id:        a.event_id,
         assignment_id:   a.id,

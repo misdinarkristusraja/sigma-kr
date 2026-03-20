@@ -636,6 +636,7 @@ export default function ScheduleWeeklyPage() {
   async function loadMonitorData() {
     setMonitorLoad(true);
     const now = new Date();
+    const nowStr = now.toISOString().split('T')[0];
 
     // Pool aktif (sama seperti generate)
     const { data: pool } = await supabase.from('users')
@@ -644,49 +645,100 @@ export default function ScheduleWeeklyPage() {
       .in('role', ['Misdinar_Aktif', 'Misdinar_Retired']);
     if (!pool?.length) { setMonitorLoad(false); return; }
 
-    // Semua assignments 90 hari terakhir
-    const since90 = new Date(now - 90*24*3600*1000).toISOString().split('T')[0];
+    // Assignments 180 hari terakhir — pakai created_at (bukan tanggal_tugas)
+    // Ini yang dipakai generate jadwal: kapan TERAKHIR seseorang ditambahkan ke assignment
+    const since180 = new Date(now - 180*24*3600*1000).toISOString();
     const { data: recent } = await supabase.from('assignments')
-      .select('user_id, slot_number, events(tanggal_tugas)')
-      .gte('events.tanggal_tugas', since90);
+      .select('user_id, created_at, slot_number, events(tanggal_tugas)')
+      .gte('created_at', since180)
+      .order('created_at', { ascending: false });
 
-    // Hitung per-user: berapa kali dapat jadwal & kapan terakhir
-    const countMap = {}, lastMap = {};
-    pool.forEach(u => { countMap[u.id] = 0; lastMap[u.id] = null; });
-    (recent||[]).filter(a => a.events).forEach(a => {
-      if (countMap[a.user_id] !== undefined) {
-        countMap[a.user_id]++;
-        const tgl = a.events.tanggal_tugas;
-        if (!lastMap[a.user_id] || tgl > lastMap[a.user_id]) lastMap[a.user_id] = tgl;
+    // Per-user stats
+    const countMap    = {};  // total assignments 180 hari
+    const lastCreated = {};  // created_at assignment terakhir (untuk skor generate)
+    const lastEventDate = {}; // tanggal_tugas event terakhir (untuk info)
+    pool.forEach(u => { countMap[u.id] = 0; lastCreated[u.id] = null; lastEventDate[u.id] = null; });
+
+    (recent||[]).forEach(a => {
+      if (countMap[a.user_id] === undefined) return;
+      countMap[a.user_id]++;
+      // created_at = kapan jadwal dibuat (termasuk draft)
+      if (!lastCreated[a.user_id] || a.created_at > lastCreated[a.user_id]) {
+        lastCreated[a.user_id] = a.created_at;
+      }
+      // tanggal_tugas = tanggal misa (untuk info display)
+      const evTgl = a.events?.tanggal_tugas;
+      if (evTgl && (!lastEventDate[a.user_id] || evTgl > lastEventDate[a.user_id])) {
+        lastEventDate[a.user_id] = evTgl;
       }
     });
 
-    // Skor prioritas (makin lama = skor makin tinggi = prioritas lebih tinggi)
-    const scored = pool.map(u => {
-      const last     = lastMap[u.id];
-      const daysSince = last
-        ? Math.floor((now - new Date(last)) / 86400000)
-        : 999; // belum pernah → prioritas tertinggi
-      const count90  = countMap[u.id];
-      // Persentase probabilitas: normalized score 0-100
-      return { ...u, daysSince, count90, last, score: daysSince };
+    // ── Scoring logic ──────────────────────────────────────────────────────
+    // Skor = hari sejak assignment TERAKHIR dibuat (created_at)
+    // Makin lama = makin diprioritaskan
+    // Belum pernah = 9999 (prioritas absolut tertinggi)
+    const rawScored = pool.map(u => {
+      const lc         = lastCreated[u.id];
+      const daysSince  = lc
+        ? Math.max(0, Math.floor((now - new Date(lc)) / 86400000))
+        : 9999;
+      const count180   = countMap[u.id];
+      const lastDate   = lastEventDate[u.id];
+      return { ...u, daysSince, count180, lastDate, score: daysSince };
     }).sort((a, b) => b.score - a.score);
 
-    // Hitung prioritas relatif (%)
-    const totalScore = scored.reduce((s, u) => s + u.score, 0);
-    const withPct    = scored.map(u => ({
+    // Normalisasi % prioritas relatif — gunakan max score sebagai baseline
+    // (bukan total — supaya distribusi lebih intuitif)
+    const maxScore = rawScored[0]?.score || 1;
+    const minScore = rawScored[rawScored.length - 1]?.score || 0;
+    const range    = Math.max(maxScore - minScore, 1);
+
+    const withPct = rawScored.map((u, i) => {
+      // % relatif terhadap range: orang dengan skor tertinggi = 100%
+      const relativePct = Math.round(((u.score - minScore) / range) * 100);
+      // Tier prioritas berdasarkan skor absolut
+      const tier = u.score >= 9999 ? 'new'
+                 : u.score >= 30   ? 'high'
+                 : u.score >= 14   ? 'medium'
+                 : 'low';
+      return { ...u, relativePct, tier, rank: i + 1 };
+    });
+
+    // ── Kuota bulan ini ───────────────────────────────────────────────────
+    const weekendsInMonth = getWeekends(year, month);
+    const totalSlotsMonth = weekendsInMonth.length * 4 * PETUGAS_PER_SLOT;
+    const poolSize        = pool.length;
+    const idealPerPerson  = poolSize > 0 ? (totalSlotsMonth / poolSize).toFixed(1) : 0;
+
+    // Hitung berapa slot sudah terisi bulan ini (dari draft/published)
+    const monthStart  = `${year}-${String(month).padStart(2,'0')}-01`;
+    const monthEnd    = `${year}-${String(month).padStart(2,'0')}-31`;
+    const { data: thisMonthAssigns } = await supabase.from('assignments')
+      .select('user_id, events(tanggal_tugas, is_draft)')
+      .gte('events.tanggal_tugas', monthStart)
+      .lte('events.tanggal_tugas', monthEnd);
+
+    const assignedThisMonth = {};
+    pool.forEach(u => { assignedThisMonth[u.id] = 0; });
+    (thisMonthAssigns||[]).filter(a => a.events).forEach(a => {
+      if (assignedThisMonth[a.user_id] !== undefined) assignedThisMonth[a.user_id]++;
+    });
+    const filledSlots = (thisMonthAssigns||[]).filter(a => a.events).length;
+
+    // Tambahkan count bulan ini ke setiap member
+    const final = withPct.map(u => ({
       ...u,
-      priorityPct: totalScore > 0 ? Math.round((u.score / totalScore) * 100 * 10) / 10 : 0,
+      countThisMonth: assignedThisMonth[u.id] || 0,
     }));
 
-    // Quota check: total slots per month
-    const targetMonth = { year: year, month: month };
-    const weekendsInMonth = getWeekends(year, month);
-    const totalSlotsMonth = weekendsInMonth.length * 4 * PETUGAS_PER_SLOT; // 4 slots × 8 petugas
-    const poolSize = pool.length;
-    const idealPerPerson = poolSize > 0 ? (totalSlotsMonth / poolSize).toFixed(1) : 0;
-
-    setMonitorData({ members: withPct, totalSlotsMonth, poolSize, idealPerPerson, weekendsInMonth: weekendsInMonth.length });
+    setMonitorData({
+      members: final,
+      totalSlotsMonth,
+      filledSlots,
+      poolSize,
+      idealPerPerson,
+      weekendsInMonth: weekendsInMonth.length,
+    });
     setMonitorLoad(false);
   }
 
@@ -1262,12 +1314,13 @@ export default function ScheduleWeeklyPage() {
 
           {/* Quota info */}
           {monitorData?.idealPerPerson && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               {[
-                { label: 'Total Anggota Aktif',    val: monitorData.poolSize,           color: 'bg-brand-50' },
-                { label: 'Weekend bulan ini',       val: monitorData.weekendsInMonth + 'x', color: 'bg-green-50' },
-                { label: 'Total Slot bulan ini',    val: monitorData.totalSlotsMonth,    color: 'bg-blue-50' },
-                { label: 'Ideal per Orang/Bulan',   val: monitorData.idealPerPerson + 'x', color: 'bg-yellow-50' },
+                { label: 'Anggota Aktif',      val: monitorData.poolSize,                             color: 'bg-brand-50' },
+                { label: 'Weekend bulan ini',  val: monitorData.weekendsInMonth + '×',                color: 'bg-green-50' },
+                { label: 'Total Slot',         val: monitorData.totalSlotsMonth,                      color: 'bg-blue-50' },
+                { label: 'Slot Terisi',        val: (monitorData.filledSlots||0) + '/' + monitorData.totalSlotsMonth, color: monitorData.filledSlots >= monitorData.totalSlotsMonth ? 'bg-green-100' : 'bg-orange-50' },
+                { label: 'Ideal per Orang',    val: monitorData.idealPerPerson + '×',                 color: 'bg-yellow-50' },
               ].map(c => (
                 <div key={c.label} className={`card ${c.color} border-0 text-center`}>
                   <div className="text-2xl font-black text-gray-800">{c.val}</div>
@@ -1299,65 +1352,123 @@ export default function ScheduleWeeklyPage() {
             </div>
           )}
 
+          {/* Filled slots progress */}
+          {monitorData?.filledSlots !== undefined && (
+            <div className="card">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-semibold text-gray-700 text-sm">Progress Jadwal Bulan Ini</h3>
+                <span className="text-xs text-gray-500">
+                  {monitorData.filledSlots} / {monitorData.totalSlotsMonth} slot terisi
+                </span>
+              </div>
+              <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+                <div
+                  className={`h-3 rounded-full transition-all ${
+                    monitorData.filledSlots >= monitorData.totalSlotsMonth ? 'bg-green-500' :
+                    monitorData.filledSlots > monitorData.totalSlotsMonth * 0.5 ? 'bg-brand-800' : 'bg-orange-400'
+                  }`}
+                  style={{ width: `${Math.min(100, Math.round(monitorData.filledSlots / Math.max(1, monitorData.totalSlotsMonth) * 100))}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                {monitorData.filledSlots >= monitorData.totalSlotsMonth
+                  ? '✅ Semua slot sudah terisi'
+                  : `Sisa ${monitorData.totalSlotsMonth - monitorData.filledSlots} slot kosong (termasuk draft)`}
+              </p>
+            </div>
+          )}
+
           {/* Priority table */}
           <div className="card overflow-hidden p-0">
             <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
               <h3 className="font-semibold text-gray-700">Daftar Prioritas Generate</h3>
               <div className="flex items-center gap-2">
+                <div className="flex gap-2 text-[10px] font-medium">
+                  <span className="text-red-500">🔴 Lama (&gt;30hr)</span>
+                  <span className="text-orange-500">🟠 Sedang (14-30hr)</span>
+                  <span className="text-green-600">🟢 Baru (&lt;14hr)</span>
+                  <span className="text-blue-500">🆕 Belum pernah</span>
+                </div>
                 <button onClick={loadMonitorData} disabled={monitorLoad} className="btn-ghost p-1.5">
                   <RefreshCw size={14} className={monitorLoad ? 'animate-spin' : ''}/>
                 </button>
-                <span className="text-xs text-gray-400">
-                  Urutan = urutan generate jadwal berikutnya
-                </span>
               </div>
             </div>
             {monitorLoad ? (
               <div className="p-6 text-center text-gray-400">Menghitung prioritas...</div>
             ) : (
               <div className="overflow-x-auto max-h-[60vh]">
-                <table className="tbl">
+                <table className="tbl text-xs">
                   <thead>
                     <tr>
                       <th className="w-8">#</th>
                       <th>Anggota</th>
                       <th>Lingkungan</th>
-                      <th>Terakhir Dijadwalkan</th>
-                      <th>Hari Sejak</th>
-                      <th>Jadwal 90hr</th>
-                      <th>% Prioritas</th>
-                      <th>Prioritas Bar</th>
+                      <th>Jadwal Misa Berikutnya</th>
+                      <th>Hari Sejak Dijadwalkan</th>
+                      <th>Bulan Ini</th>
+                      <th>180hr</th>
+                      <th>Prioritas Relatif</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(monitorData?.members || []).map((u, i) => {
-                      const pct = u.priorityPct || 0;
-                      const urgency = u.daysSince >= 60 ? 'text-red-600' : u.daysSince >= 30 ? 'text-orange-500' : 'text-green-600';
+                      const tierColor = u.tier === 'new'    ? 'text-blue-500 bg-blue-50' :
+                                        u.tier === 'high'   ? 'text-red-600 bg-red-50' :
+                                        u.tier === 'medium' ? 'text-orange-500 bg-orange-50' :
+                                                              'text-green-600 bg-green-50';
+                      const tierIcon  = u.tier === 'new' ? '🆕' : u.tier === 'high' ? '🔴' : u.tier === 'medium' ? '🟠' : '🟢';
+                      const barColor  = u.tier === 'new'    ? 'bg-blue-400'   :
+                                        u.tier === 'high'   ? 'bg-red-500'    :
+                                        u.tier === 'medium' ? 'bg-orange-400' : 'bg-green-400';
+                      const nextSlot  = i < PETUGAS_PER_SLOT;   // next 8 = first slot
                       return (
-                        <tr key={u.id} className={i < 8 ? 'bg-green-50/40' : ''}>
-                          <td className="text-gray-400 text-xs font-mono">
+                        <tr key={u.id} className={nextSlot ? 'bg-brand-50/50' : ''}>
+                          <td className="font-mono text-gray-400">
                             {i + 1}
-                            {i < 8 && <span className="ml-1 text-green-600 text-[9px]">▶</span>}
+                            {nextSlot && <span className="ml-1 text-brand-600 font-bold">▶</span>}
                           </td>
                           <td>
-                            <div className="font-medium text-sm text-gray-900">{u.nama_panggilan}</div>
-                            <div className="text-xs text-gray-400">@{u.nickname}</div>
+                            <div className="font-semibold text-gray-900">{u.nama_panggilan}</div>
+                            <div className="text-gray-400">@{u.nickname}</div>
                           </td>
-                          <td className="text-xs text-gray-500">{u.lingkungan}</td>
-                          <td className="text-xs text-gray-500">
-                            {u.last ? new Date(u.last).toLocaleDateString('id-ID', { day:'numeric', month:'short', year:'numeric' }) : <span className="text-blue-500 font-medium">Belum pernah</span>}
+                          <td className="text-gray-500">{u.lingkungan}</td>
+                          <td>
+                            {u.lastDate
+                              ? <span className="text-gray-600">
+                                  {new Date(u.lastDate).toLocaleDateString('id-ID', { day:'numeric', month:'short', year:'numeric' })}
+                                  {u.lastDate >= new Date().toISOString().split('T')[0]
+                                    ? <span className="ml-1 text-brand-600 text-[10px] font-medium">(draft/akan datang)</span>
+                                    : null}
+                                </span>
+                              : <span className="text-blue-500 font-semibold">Belum pernah dijadwalkan</span>
+                            }
                           </td>
-                          <td className={`font-bold text-sm ${urgency}`}>
-                            {u.daysSince >= 999 ? '∞' : u.daysSince + ' hr'}
+                          <td>
+                            <span className={`px-2 py-0.5 rounded-lg font-bold text-xs ${tierColor}`}>
+                              {tierIcon} {u.daysSince >= 9999 ? '∞' : u.daysSince === 0 ? 'Hari ini' : `${u.daysSince} hari`}
+                            </span>
                           </td>
-                          <td className="text-center text-sm text-gray-600">{u.count90}×</td>
-                          <td className="font-bold text-sm text-brand-800">{pct}%</td>
-                          <td className="w-24">
-                            <div className="w-full bg-gray-100 rounded-full h-2">
-                              <div
-                                className={`h-2 rounded-full ${i < 8 ? 'bg-green-500' : 'bg-brand-400'}`}
-                                style={{ width: `${Math.min(pct * 3, 100)}%` }}
-                              />
+                          <td className="text-center">
+                            <span className={u.countThisMonth > 0 ? 'font-bold text-brand-800' : 'text-gray-400'}>
+                              {u.countThisMonth > 0 ? `${u.countThisMonth}×` : '—'}
+                            </span>
+                          </td>
+                          <td className="text-center text-gray-500">{u.count180}×</td>
+                          <td className="w-32">
+                            <div className="flex items-center gap-1.5">
+                              <div className="flex-1 bg-gray-100 rounded-full h-2 min-w-[40px]">
+                                <div
+                                  className={`h-2 rounded-full transition-all ${barColor}`}
+                                  style={{ width: `${u.relativePct}%` }}
+                                />
+                              </div>
+                              <span className={`text-[10px] font-bold w-8 text-right ${
+                                u.relativePct >= 80 ? 'text-red-600' :
+                                u.relativePct >= 50 ? 'text-orange-500' : 'text-gray-400'
+                              }`}>
+                                {u.relativePct}%
+                              </span>
                             </div>
                           </td>
                         </tr>
@@ -1369,8 +1480,8 @@ export default function ScheduleWeeklyPage() {
             )}
           </div>
           <p className="text-xs text-gray-400">
-            🟢 Baris hijau = 8 orang pertama yang akan mengisi slot pertama saat generate jadwal berikutnya.
-            Skor di-refresh otomatis setelah generate.
+            ▶ Baris merah muda = {PETUGAS_PER_SLOT} orang pertama yang mendapat giliran saat generate jadwal berikutnya.
+            Skor dihitung berdasarkan kapan assignment terakhir <em>dibuat</em> (termasuk draft) — bukan tanggal misa.
           </p>
         </div>
       )}

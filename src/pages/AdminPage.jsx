@@ -205,10 +205,12 @@ export default function AdminPage() {
   async function resetPassword(user) {
     if (!confirm(`Reset password ${user.nickname}?`)) return;
     const tempPass = `sigma${user.myid?.slice(0,6) || 'reset'}`;
-    const { error } = await supabase.auth.admin.updateUserById(user.id, { password: tempPass });
-    if (error) { toast.error('Gagal reset: ' + error.message); return; }
+    const { data, error } = await supabase.rpc('admin_reset_password', {
+      p_user_id: user.id, p_new_password: tempPass,
+    });
+    if (error || data?.ok === false) { toast.error('Gagal reset: ' + (error?.message || data?.error)); return; }
     await supabase.from('audit_logs').insert({ actor_id: profile?.id, action: 'RESET_PASSWORD', target_id: user.id });
-    toast.success(`Password direset. Temp: ${tempPass}`);
+    toast.success(`Password direset ke: ${tempPass}`);
   }
 
   async function manualBackup() {
@@ -293,17 +295,14 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     for (const u of targets) {
       const pw = genPassword(8);
       try {
-        const { error } = await supabase.auth.admin.updateUserById(u.id, { password: pw });
+        const { data, error } = await supabase.rpc('admin_reset_password', {
+          p_user_id: u.id, p_new_password: pw,
+        });
         if (error) throw error;
+        if (data?.ok === false) throw new Error(data.error);
         results.push({ user: u, password: pw, error: null });
-      } catch (err) {
-        // Fallback via RPC
-        try {
-          await supabase.rpc('admin_reset_password', { p_user_id: u.id, p_new_password: pw });
-          results.push({ user: u, password: pw, error: null });
-        } catch (e2) {
-          results.push({ user: u, password: pw, error: e2.message });
-        }
+      } catch (e) {
+        results.push({ user: u, password: pw, error: e.message });
       }
     }
     setGenResults(results);
@@ -520,16 +519,12 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
               members={pwUsers}
               genPassword={genPassword}
               onReset={async (userId, pw) => {
-                try {
-                  const { error } = await supabase.auth.admin.updateUserById(userId, { password: pw });
-                  if (error) throw error;
-                  return { ok: true };
-                } catch {
-                  const { error: rpcErr } = await supabase.rpc('admin_reset_password', {
-                    p_user_id: userId, p_new_password: pw
-                  });
-                  return { ok: !rpcErr, error: rpcErr?.message };
-                }
+                const { data, error } = await supabase.rpc('admin_reset_password', {
+                  p_user_id: userId, p_new_password: pw,
+                });
+                if (error) return { ok: false, error: error.message };
+                if (data?.ok === false) return { ok: false, error: data.error };
+                return { ok: true };
               }}
             />
           </div>

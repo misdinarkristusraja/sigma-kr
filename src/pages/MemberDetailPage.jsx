@@ -124,17 +124,13 @@ export default function MemberDetailPage() {
     if (!confirm(`Reset password ${member.nama_panggilan} ke password baru?`)) return;
     setResetting(true);
     try {
-      // Supabase Admin: update user password
-      const { error } = await supabase.auth.admin.updateUserById(id, {
-        password: newPw,
+      // Gunakan RPC admin_reset_password (SECURITY DEFINER — bypass anon key restriction)
+      const { data, error } = await supabase.rpc('admin_reset_password', {
+        p_user_id:      id,
+        p_new_password: newPw,
       });
       if (error) throw error;
-
-      // Tandai harus ganti password
-      await supabase.from('users').update({
-        must_change_password: true,
-        updated_at: new Date().toISOString(),
-      }).eq('id', id);
+      if (data?.ok === false) throw new Error(data.error);
 
       setLastPwForWA(newPw);
       toast.success(`Password ${member.nama_panggilan} berhasil direset!`);
@@ -142,19 +138,7 @@ export default function MemberDetailPage() {
       setNewPw('');
       loadMember();
     } catch (err) {
-      // Jika tidak ada admin access, coba via RPC
-      const { error: rpcErr } = await supabase.rpc('admin_reset_password', {
-        p_user_id: id,
-        p_new_password: newPw,
-      });
-      if (rpcErr) {
-        toast.error('Gagal reset: ' + (err.message || rpcErr.message));
-      } else {
-        await supabase.from('users').update({ must_change_password: true }).eq('id', id);
-        setLastPwForWA(newPw);
-        toast.success('Password berhasil direset via RPC!');
-        setNewPw('');
-      }
+      toast.error('Gagal reset: ' + err.message);
     } finally {
       setResetting(false);
     }
