@@ -674,34 +674,81 @@ export default function ScheduleWeeklyPage() {
     });
 
     // ── Scoring logic ──────────────────────────────────────────────────────
-    // Skor = hari sejak assignment TERAKHIR dibuat (created_at)
-    // Makin lama = makin diprioritaskan
-    // Belum pernah = 9999 (prioritas absolut tertinggi)
+    // Skor dasar = hari sejak assignment terakhir dibuat (created_at)
+    // Bonus/Penalti dari rekap kehadiran 180 hari terakhir:
+    //   Setiap K6 (absen tanpa ijin) = -5 hari bonus (orang paling sering absen
+    //   naik prioritas lebih lambat — "reward yang hadir")
+    //   Setiap K5 (hadir latihan saja) = -2 hari (sudah ada effort)
+    // Belum pernah dijadwalkan = 9999
+
+    // Ambil rekap K5/K6 per user
+    const since60 = new Date(now - 60*24*3600*1000).toISOString().split('T')[0];
+    const { data: recentScans } = await supabase.from('scan_records')
+      .select('user_id, scan_type, event_id, timestamp')
+      .gte('timestamp', since60 + 'T00:00:00');
+    const { data: recentAssigns } = await supabase.from('assignments')
+      .select('user_id, event_id, events(tanggal_tugas)')
+      .gte('events.tanggal_tugas', since60);
+
+    // Compute K5/K6 counts per user (simple version)
+    const k6Map = {}, k5Map = {};
+    pool.forEach(u => { k6Map[u.id] = 0; k5Map[u.id] = 0; });
+    const scansByUser = {};
+    pool.forEach(u => { scansByUser[u.id] = { tugas: false, latihan: false }; });
+
+    // Group scans by user+week
+    const assignsByUser = {};
+    pool.forEach(u => { assignsByUser[u.id] = new Set(); });
+    (recentAssigns||[]).filter(a=>a.events).forEach(a => {
+      if (assignsByUser[a.user_id]) assignsByUser[a.user_id].add(a.event_id);
+    });
+
+    // Simple absen check: assigned but no tugas scan
+    (pool).forEach(u => {
+      const assigned = assignsByUser[u.id];
+      const userScans = (recentScans||[]).filter(s => s.user_id === u.id);
+      const scanEventIds = new Set(userScans.filter(s=>s.scan_type==='tugas'||s.scan_type==='walkin_tugas').map(s=>s.event_id).filter(Boolean));
+      const latihanEventIds = new Set(userScans.filter(s=>s.scan_type==='latihan'||s.scan_type==='walkin_latihan').map(s=>s.event_id).filter(Boolean));
+      assigned.forEach(eid => {
+        if (!scanEventIds.has(eid)) {
+          if (latihanEventIds.has(eid)) k5Map[u.id]++;  // K5: hadir latihan tapi absen tugas
+          else k6Map[u.id]++;                            // K6: absen total
+        }
+      });
+    });
+
     const rawScored = pool.map(u => {
-      const lc         = lastCreated[u.id];
-      const daysSince  = lc
+      const lc        = lastCreated[u.id];
+      const baseScore = lc
         ? Math.max(0, Math.floor((now - new Date(lc)) / 86400000))
         : 9999;
-      const count180   = countMap[u.id];
-      const lastDate   = lastEventDate[u.id];
-      return { ...u, daysSince, count180, lastDate, score: daysSince };
+      // Penalti: K6 mengurangi "kredit tunggu" sedikit
+      const penalty   = (k6Map[u.id] || 0) * 5 + (k5Map[u.id] || 0) * 2;
+      const score     = baseScore >= 9999 ? 9999 : Math.max(0, baseScore - penalty);
+      return {
+        ...u,
+        daysSince:  baseScore,
+        score,
+        count180:   countMap[u.id],
+        k6Count:    k6Map[u.id] || 0,
+        k5Count:    k5Map[u.id] || 0,
+        penalty,
+        lastDate:   lastEventDate[u.id],
+      };
     }).sort((a, b) => b.score - a.score);
 
-    // Normalisasi % prioritas relatif — gunakan max score sebagai baseline
-    // (bukan total — supaya distribusi lebih intuitif)
-    const maxScore = rawScored[0]?.score || 1;
-    const minScore = rawScored[rawScored.length - 1]?.score || 0;
-    const range    = Math.max(maxScore - minScore, 1);
-
+    // Normalisasi relatif — gunakan distribusi yang bermakna
+    // Jika semua score dekat (misal 0-2 hari), tetap tampilkan proporsi
+    const maxScore = Math.max(...rawScored.map(u => u.score >= 9999 ? 0 : u.score), 1);
     const withPct = rawScored.map((u, i) => {
-      // % relatif terhadap range: orang dengan skor tertinggi = 100%
-      const relativePct = Math.round(((u.score - minScore) / range) * 100);
-      // Tier prioritas berdasarkan skor absolut
+      const pct = u.score >= 9999 ? 100
+                : maxScore > 0   ? Math.round((u.score / maxScore) * 100)
+                : 0;
       const tier = u.score >= 9999 ? 'new'
                  : u.score >= 30   ? 'high'
-                 : u.score >= 14   ? 'medium'
+                 : u.score >= 7    ? 'medium'
                  : 'low';
-      return { ...u, relativePct, tier, rank: i + 1 };
+      return { ...u, relativePct: pct, tier, rank: i + 1 };
     });
 
     // ── Kuota bulan ini ───────────────────────────────────────────────────
@@ -1404,11 +1451,13 @@ export default function ScheduleWeeklyPage() {
                       <th className="w-8">#</th>
                       <th>Anggota</th>
                       <th>Lingkungan</th>
-                      <th>Jadwal Misa Berikutnya</th>
-                      <th>Hari Sejak Dijadwalkan</th>
+                      <th>Jadwal Terakhir</th>
+                      <th>Hari Sejak</th>
+                      <th>K6 Penalti</th>
+                      <th>K5</th>
+                      <th>Skor Efektif</th>
                       <th>Bulan Ini</th>
-                      <th>180hr</th>
-                      <th>Prioritas Relatif</th>
+                      <th>Prioritas</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1450,22 +1499,44 @@ export default function ScheduleWeeklyPage() {
                             </span>
                           </td>
                           <td className="text-center">
+                            {u.k6Count > 0
+                              ? <span className="text-red-600 font-bold bg-red-50 px-1.5 rounded text-xs">
+                                  K6 ×{u.k6Count} (-{u.k6Count*5}hr)
+                                </span>
+                              : <span className="text-gray-300">—</span>}
+                          </td>
+                          <td className="text-center">
+                            {u.k5Count > 0
+                              ? <span className="text-teal-600 font-bold bg-teal-50 px-1.5 rounded text-xs">
+                                  K5 ×{u.k5Count} (-{u.k5Count*2}hr)
+                                </span>
+                              : <span className="text-gray-300">—</span>}
+                          </td>
+                          <td className="text-center">
+                            <span className="font-bold text-sm text-gray-700">
+                              {u.score >= 9999 ? '∞' : `${u.score} hr`}
+                            </span>
+                            {u.penalty > 0 && (
+                              <div className="text-[9px] text-red-400">(-{u.penalty} penalti)</div>
+                            )}
+                          </td>
+                          <td className="text-center">
                             <span className={u.countThisMonth > 0 ? 'font-bold text-brand-800' : 'text-gray-400'}>
                               {u.countThisMonth > 0 ? `${u.countThisMonth}×` : '—'}
                             </span>
                           </td>
-                          <td className="text-center text-gray-500">{u.count180}×</td>
-                          <td className="w-32">
+                          <td className="w-28">
                             <div className="flex items-center gap-1.5">
-                              <div className="flex-1 bg-gray-100 rounded-full h-2 min-w-[40px]">
+                              <div className="flex-1 bg-gray-100 rounded-full h-2.5 min-w-[36px] overflow-hidden">
                                 <div
-                                  className={`h-2 rounded-full transition-all ${barColor}`}
+                                  className={`h-2.5 rounded-full transition-all duration-500 ${barColor}`}
                                   style={{ width: `${u.relativePct}%` }}
                                 />
                               </div>
-                              <span className={`text-[10px] font-bold w-8 text-right ${
+                              <span className={`text-xs font-black w-9 text-right ${
                                 u.relativePct >= 80 ? 'text-red-600' :
-                                u.relativePct >= 50 ? 'text-orange-500' : 'text-gray-400'
+                                u.relativePct >= 50 ? 'text-orange-500' :
+                                u.relativePct >= 20 ? 'text-brand-700' : 'text-gray-400'
                               }`}>
                                 {u.relativePct}%
                               </span>

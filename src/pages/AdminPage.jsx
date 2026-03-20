@@ -129,9 +129,11 @@ export default function AdminPage() {
   const [loading, setLoading]   = useState(true);
   const [saving,  setSaving]    = useState(false);
   const [auditLog,   setAuditLog]  = useState([]);
-  const [pwUsers,    setPwUsers]   = useState([]);   // anggota tanpa password / must_change
+  const [pwUsers,    setPwUsers]   = useState([]);
   const [loadingPw,  setLoadingPw] = useState(false);
-  const [genResults, setGenResults]= useState([]);   // [{user, password, sent}]
+  const [genResults, setGenResults]= useState([]);
+  const [massLoading,setMassLoad]  = useState(false);
+  const [massResults,setMassRes]   = useState([]);   // [{user, password, ok}]
 
   useEffect(() => { loadAll(); }, [tab]);
 
@@ -317,6 +319,28 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     window.open(`https://wa.me/${phone}?text=${buildWAMsg(user, password)}`, '_blank');
   }
 
+  async function massResetAllPasswords() {
+    if (!confirm(`Reset password SEMUA ${users.length} anggota aktif? Setiap orang akan menerima password baru dan wajib menggantinya saat login.`)) return;
+    setMassLoad(true);
+    setMassRes([]);
+    const results = [];
+    for (const u of users) {
+      const pw = genPassword(8);
+      try {
+        const { data, error } = await supabase.rpc('admin_reset_password', { p_user_id: u.id, p_new_password: pw });
+        if (error) throw error;
+        if (data?.ok === false) throw new Error(data.error);
+        results.push({ user: u, password: pw, ok: true });
+      } catch (e) {
+        results.push({ user: u, password: pw, ok: false, error: e.message });
+      }
+    }
+    setMassRes(results);
+    setMassLoad(false);
+    const ok = results.filter(r=>r.ok).length;
+    toast.success(`${ok}/${results.length} password berhasil direset!`);
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -370,7 +394,52 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
 
       {/* Users tab */}
       {tab === 'users' && (
-        <div className="card overflow-hidden p-0">
+        <div className="space-y-4">
+          {/* Mass password reset */}
+          <div className="card border-red-100 bg-red-50/30 space-y-3">
+            <h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm">
+              <KeyRound size={15}/> Reset Password Massal
+            </h3>
+            <p className="text-xs text-red-700">
+              Reset password semua anggota sekaligus. Cocok untuk deployment pertama kali.
+              Setiap anggota wajib mengganti password saat login berikutnya.
+            </p>
+            <div className="flex gap-3 flex-wrap items-center">
+              <button onClick={massResetAllPasswords} disabled={massLoading}
+                className="btn-danger gap-2 transition-all hover:scale-105 active:scale-95">
+                <KeyRound size={15}/>
+                {massLoading ? 'Mereset...' : `🔑 Reset Semua (${users.filter(u=>u.status==='Active').length} anggota aktif)`}
+              </button>
+              {massResults.length > 0 && (
+                <span className="text-xs text-gray-500">
+                  ✅ {massResults.filter(r=>r.ok).length} berhasil · ❌ {massResults.filter(r=>!r.ok).length} gagal
+                </span>
+              )}
+            </div>
+            {massResults.length > 0 && (
+              <div className="overflow-x-auto max-h-64 border border-red-100 rounded-xl">
+                <table className="tbl text-xs">
+                  <thead><tr><th>Nama</th><th>Username</th><th>Password Baru</th><th>HP Ortu</th><th>WA</th></tr></thead>
+                  <tbody>
+                    {massResults.map((r,i) => (
+                      <tr key={i} className={r.ok ? '' : 'bg-red-50'}>
+                        <td className="font-medium">{r.user.nama_panggilan}</td>
+                        <td className="font-mono text-gray-600">{r.user.nickname}</td>
+                        <td>{r.ok ? <code className="bg-gray-100 px-2 py-0.5 rounded font-bold text-brand-800">{r.password}</code> : <span className="text-red-500">❌ {r.error}</span>}</td>
+                        <td className="text-gray-500 text-xs">{r.user.hp_ortu || r.user.hp_anak || '—'}</td>
+                        <td>{r.ok && (r.user.hp_ortu||r.user.hp_anak) && (
+                          <button onClick={() => openWA(r.user, r.password)} className="btn-primary btn-sm gap-1 text-xs transition-all hover:scale-105 active:scale-95">
+                            <MessageCircle size={12}/> WA
+                          </button>
+                        )}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <div className="card overflow-hidden p-0">
           <div className="overflow-x-auto">
             <table className="tbl">
               <thead>

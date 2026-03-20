@@ -335,7 +335,10 @@ export default function RecapPage() {
       const total = rows.reduce((s,r) => s+(r.poin||0), 0);
       const k6    = rows.filter(r => r.kondisi === 'K6').length;
       const hadir = rows.filter(r => r.is_hadir_tugas || r.is_hadir_latihan).length;
-      return { ...m, rows, totalPoin: total, k6, hadir, minggu: rows.length };
+      // Compute K counts for enhanced table
+      const kCounts = {};
+      ['K1','K2','K3','K4','K5','K6'].forEach(k => { kCounts[k] = rows.filter(r=>r.kondisi===k).length; });
+      return { ...m, rows, totalPoin: total, k6, hadir, minggu: rows.length, kCounts };
     });
     setAllRekap(result);
     setAllLoad(false);

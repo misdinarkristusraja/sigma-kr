@@ -7,205 +7,199 @@ import { buildQRUrl } from '../lib/utils';
 import { CreditCard, Download, Search, FileDown, Loader } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-// ── Helpers ──────────────────────────────────────────────
-function titleCase(str) {
-  return (str || '').split(' ').map(w => w ? w[0].toUpperCase() + w.slice(1) : '').join(' ');
+function titleCase(s) {
+  return (s||'').replace(/\b\w/g, c => c.toUpperCase());
+}
+function truncate(s, n) {
+  return s.length > n ? s.slice(0, n-1) + '…' : s;
 }
 
 async function makeQR(url) {
   return QRCode.toDataURL(url, {
-    width: 320, margin: 1,
-    color: { dark: '#111111', light: '#ffffff' },
+    width: 280, margin: 1,
+    color: { dark: '#000000', light: '#ffffff' },
     errorCorrectionLevel: 'M',
   });
 }
 
-// ── Canvas card drawing ───────────────────────────────────
-// Returns a PNG data URL
-async function drawCard(member, qrDataUrl, type) {
-  const W = 400, H = 240, R = 18, SCALE = 3;
-  const canvas = document.createElement('canvas');
-  canvas.width  = W * SCALE;
-  canvas.height = H * SCALE;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(SCALE, SCALE);
-
-  const isTugas = type === 'tugas';
-  const name    = titleCase(member.nama_panggilan || member.nickname);
-  const linkg   = member.lingkungan || '';
-
-  // ── Background ────────────────────────────────────────
-  ctx.save();
-  // Rounded rect clip
-  roundRect(ctx, 0, 0, W, H, R);
-  ctx.clip();
-
-  if (isTugas) {
-    // Krem gradient
-    const grd = ctx.createLinearGradient(0, 0, W, H);
-    grd.addColorStop(0, '#FFFDF0');
-    grd.addColorStop(1, '#FFF7D4');
-    ctx.fillStyle = grd;
-    ctx.fillRect(0, 0, W, H);
-  } else {
-    // Merah gradient
-    const grd = ctx.createLinearGradient(0, 0, W, H);
-    grd.addColorStop(0, '#9B0000');
-    grd.addColorStop(1, '#6B0000');
-    ctx.fillStyle = grd;
-    ctx.fillRect(0, 0, W, H);
-  }
-
-  // ── Decorative shapes ────────────────────────────────
-  ctx.globalAlpha = 0.07;
-  ctx.fillStyle = isTugas ? '#B45309' : '#ffffff';
-  ctx.beginPath(); ctx.arc(W - 40, -30, 90, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(-20, H + 20, 70, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(W/2, H*1.3, 60, 0, Math.PI * 2); ctx.fill();
-  ctx.globalAlpha = 1;
-
-  // ── Left stripe accent ────────────────────────────────
-  ctx.fillStyle = isTugas ? '#D97706' : 'rgba(255,255,255,0.15)';
-  ctx.fillRect(0, 0, 4, H);
-
-  // ── QR area (right side) ──────────────────────────────
-  const qrSize  = 110;
-  const qrX     = W - qrSize - 18;
-  const qrY     = (H - qrSize) / 2;
-
-  // QR background card
-  ctx.fillStyle = isTugas ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.12)';
-  roundRect(ctx, qrX - 8, qrY - 8, qrSize + 16, qrSize + 16, 10);
-  ctx.fill();
-
-  // QR border
-  ctx.strokeStyle = isTugas ? '#FCD34D' : 'rgba(255,255,255,0.3)';
-  ctx.lineWidth = 1.5;
-  roundRect(ctx, qrX - 8, qrY - 8, qrSize + 16, qrSize + 16, 10);
-  ctx.stroke();
-
-  ctx.restore();
-
-  // Draw QR image
-  await new Promise(res => {
-    const img = new Image();
-    img.onload = () => { ctx.drawImage(img, qrX, qrY, qrSize, qrSize); res(); };
-    img.src = qrDataUrl;
-  });
-
-  // ── Text content ──────────────────────────────────────
-  const textColor    = isTugas ? '#1C1917' : '#FFFFFF';
-  const subColor     = isTugas ? '#92400E' : '#FECACA';
-  const subtitleColor= isTugas ? '#D97706' : '#FCA5A5';
-
-  // Type label (small caps)
-  ctx.font = '600 9px "Inter", sans-serif';
-  ctx.fillStyle = subtitleColor;
-  ctx.letterSpacing = '3px';
-  ctx.fillText((isTugas ? 'KARTU TUGAS' : 'KARTU LATIHAN').toUpperCase(), 20, 28);
-
-  // SIGMA large
-  ctx.font = 'bold 30px "Inter", sans-serif';
-  ctx.fillStyle = textColor;
-  ctx.fillText('SIGMA', 20, 62);
-
-  // Subtitle
-  ctx.font = '10px "Inter", sans-serif';
-  ctx.fillStyle = subtitleColor;
-  ctx.fillText('Misdinar Kristus Raja Solo Baru', 20, 77);
-
-  // Divider line
-  ctx.strokeStyle = isTugas ? 'rgba(180,83,9,0.2)' : 'rgba(255,255,255,0.2)';
-  ctx.lineWidth = 0.8;
-  ctx.beginPath(); ctx.moveTo(20, 84); ctx.lineTo(qrX - 20, 84); ctx.stroke();
-
-  // Name
-  ctx.font = 'bold 18px "Inter", sans-serif';
-  ctx.fillStyle = textColor;
-  ctx.fillText(truncName(name, 22), 20, H - 60);
-
-  // Lingkungan
-  ctx.font = '11px "Inter", sans-serif';
-  ctx.fillStyle = subColor;
-  ctx.fillText(linkg, 20, H - 44);
-
-  // Bottom message
-  ctx.font = 'italic 8.5px "Inter", sans-serif';
-  ctx.fillStyle = subColor;
-  ctx.fillText(
-    isTugas
-      ? 'Silakan tunjukkan kartu ini kepada PIC'
-      : 'Silakan tunjukkan kartu ini kepada Pelatih',
-    20, H - 22
-  );
-
-  // Handle (small)
-  ctx.font = '8px "Inter", sans-serif';
-  ctx.fillStyle = isTugas ? 'rgba(120,60,0,0.4)' : 'rgba(255,255,255,0.35)';
-  ctx.fillText('@misdinarkrsoba', 20, H - 10);
-
-  // Tagline under QR
-  ctx.font = 'italic 7px "Inter", sans-serif';
-  ctx.fillStyle = subColor;
-  ctx.textAlign = 'center';
-  ctx.fillText('Serve Lord With Gladness', qrX + qrSize / 2, qrY + qrSize + 12);
-  ctx.textAlign = 'left';
-
-  // ── Border ────────────────────────────────────────────
-  ctx.save();
-  roundRect(ctx, 0, 0, W, H, R);
-  ctx.strokeStyle = isTugas ? '#FCD34D' : 'rgba(255,255,255,0.1)';
-  ctx.lineWidth = isTugas ? 2 : 0;
-  ctx.stroke();
-  ctx.restore();
-
-  return canvas.toDataURL('image/png');
-}
-
-function roundRect(ctx, x, y, w, h, r) {
+function rr(ctx, x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
   ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
   ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
   ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
   ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.arcTo(x, y, x + r, y, r);
   ctx.closePath();
 }
 
-function truncName(name, maxLen) {
-  return name.length > maxLen ? name.slice(0, maxLen - 1) + '…' : name;
+async function drawCard(member, qrDataUrl, type) {
+  const isTugas = type === 'tugas';
+  const SC = 3, W = 380, H = 225;
+  const cv = document.createElement('canvas');
+  cv.width = W * SC; cv.height = H * SC;
+  const c = cv.getContext('2d');
+  c.scale(SC, SC);
+
+  // ── Background ────────────────────────────────────────
+  c.save();
+  rr(c, 0, 0, W, H, 16);
+  c.clip();
+
+  if (isTugas) {
+    const g = c.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, '#FFFAEB'); g.addColorStop(1, '#FEF3C7');
+    c.fillStyle = g;
+  } else {
+    const g = c.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, '#8B0000'); g.addColorStop(1, '#5C0000');
+    c.fillStyle = g;
+  }
+  c.fillRect(0, 0, W, H);
+
+  // Decorative circles
+  c.globalAlpha = 0.06;
+  c.fillStyle = isTugas ? '#92400E' : '#fff';
+  c.beginPath(); c.arc(W - 20, -20, 80, 0, Math.PI*2); c.fill();
+  c.beginPath(); c.arc(W - 50, H + 10, 60, 0, Math.PI*2); c.fill();
+  c.beginPath(); c.arc(30, H*0.6, 40, 0, Math.PI*2); c.fill();
+  c.globalAlpha = 1;
+
+  // Left accent
+  if (isTugas) {
+    const ag = c.createLinearGradient(0, 0, 0, H);
+    ag.addColorStop(0, '#F59E0B'); ag.addColorStop(1, '#D97706');
+    c.fillStyle = ag;
+    c.fillRect(0, 0, 5, H);
+  } else {
+    c.fillStyle = 'rgba(255,255,255,0.12)';
+    c.fillRect(0, 0, 5, H);
+  }
+  c.restore();
+
+  const QS = 105, QX = W - QS - 14, QY = (H - QS) / 2;
+
+  // QR background
+  c.save();
+  rr(c, QX - 6, QY - 6, QS + 12, QS + 12, 10);
+  c.fillStyle = isTugas ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.13)';
+  c.fill();
+  c.strokeStyle = isTugas ? '#FCD34D' : 'rgba(255,255,255,0.25)';
+  c.lineWidth = 1.5;
+  c.stroke();
+  c.restore();
+
+  // Draw QR
+  await new Promise(res => {
+    const img = new Image();
+    img.onload = () => { c.drawImage(img, QX, QY, QS, QS); res(); };
+    img.onerror = res;
+    img.src = qrDataUrl;
+  });
+
+  // ── Typography ────────────────────────────────────────
+  const txtMain = isTugas ? '#1C1917' : '#FFFFFF';
+  const txtSub  = isTugas ? '#B45309' : '#FCA5A5';
+  const txtFaint= isTugas ? 'rgba(161,80,0,0.55)' : 'rgba(255,255,255,0.38)';
+  const LX = 18;
+
+  // Badge pill "KARTU LATIHAN / TUGAS"
+  const label = isTugas ? 'KARTU TUGAS' : 'KARTU LATIHAN';
+  c.font = 'bold 8px Arial';
+  const tw = c.measureText(label).width;
+  const PX = LX, PY = 14, PW = tw + 14, PH = 14, PR = 7;
+  c.save();
+  rr(c, PX, PY, PW, PH, PR);
+  c.fillStyle = isTugas ? '#F59E0B' : 'rgba(255,255,255,0.18)';
+  c.fill();
+  c.restore();
+  c.font = 'bold 7.5px Arial';
+  c.fillStyle = isTugas ? '#fff' : '#fff';
+  c.fillText(label, PX + 7, PY + PH - 4);
+
+  // SIGMA
+  c.font = 'bold 32px Arial';
+  c.fillStyle = txtMain;
+  c.fillText('SIGMA', LX, 68);
+
+  // Subtitle
+  c.font = '9.5px Arial';
+  c.fillStyle = txtSub;
+  c.fillText('Misdinar Kristus Raja Solo Baru', LX, 82);
+
+  // Divider
+  c.strokeStyle = isTugas ? 'rgba(180,83,9,0.18)' : 'rgba(255,255,255,0.15)';
+  c.lineWidth = 0.6;
+  c.beginPath(); c.moveTo(LX, 88); c.lineTo(QX - 12, 88); c.stroke();
+
+  // Name
+  const name = truncate(titleCase(member.nama_panggilan || member.nickname), 18);
+  c.font = 'bold 19px Arial';
+  c.fillStyle = txtMain;
+  c.fillText(name, LX, H - 55);
+
+  // Lingkungan
+  c.font = '10.5px Arial';
+  c.fillStyle = txtSub;
+  c.fillText(member.lingkungan || '', LX, H - 40);
+
+  // Instructions
+  c.font = 'italic 8px Arial';
+  c.fillStyle = txtSub;
+  c.fillText(isTugas
+    ? 'Tunjukkan kepada PIC saat bertugas'
+    : 'Tunjukkan kepada Pelatih saat latihan', LX, H - 20);
+
+  // Handle
+  c.font = '7.5px Arial';
+  c.fillStyle = txtFaint;
+  c.fillText('@misdinarkrsoba', LX, H - 9);
+
+  // Tagline under QR
+  c.font = 'italic 7px Arial';
+  c.fillStyle = txtFaint;
+  c.textAlign = 'center';
+  c.fillText('Serve Lord With Gladness', QX + QS/2, QY + QS + 11);
+  c.textAlign = 'left';
+
+  // Border outline
+  c.save();
+  rr(c, 0.75, 0.75, W - 1.5, H - 1.5, 16);
+  c.strokeStyle = isTugas ? 'rgba(245,158,11,0.5)' : 'rgba(255,255,255,0.08)';
+  c.lineWidth = 1.5;
+  c.stroke();
+  c.restore();
+
+  return cv.toDataURL('image/png', 1.0);
 }
 
-// ═════════════════════════════════════════════════════════
 export default function CardsPage() {
   const { profile, isPengurus } = useAuth();
-  const [members,    setMembers]  = useState([]);
-  const [selected,   setSelected] = useState(null);
-  const [search,     setSearch]   = useState('');
-  const [cardPngs,   setCardPngs] = useState({ latihan: '', tugas: '' });
-  const [loading,    setLoading]  = useState(false);
-  const [bulkProg,   setBulkProg] = useState(null);
+  const [members,  setMembers]  = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [search,   setSearch]   = useState('');
+  const [cardPngs, setCardPngs] = useState({ latihan: '', tugas: '' });
+  const [genLoading, setGenLoading] = useState(false);
+  const [bulkProg, setBulkProg] = useState(null);
 
   useEffect(() => {
     supabase.from('users')
-      .select('id, nickname, myid, nama_panggilan, lingkungan, status')
-      .eq('status', 'Active').order('nama_panggilan')
+      .select('id, nickname, myid, nama_panggilan, lingkungan')
+      .eq('status','Active').order('nama_panggilan')
       .then(({ data }) => {
         setMembers(data || []);
         if (!isPengurus && profile) {
-          const me = (data || []).find(m => m.id === profile.id);
+          const me = (data||[]).find(m => m.id === profile.id);
           if (me) setSelected(me);
         }
       });
   }, [profile, isPengurus]);
 
-  const displayMember = selected || (members.length ? members[0] : null);
+  const displayMember = selected || members[0] || null;
 
-  // Regenerate cards when member changes
   useEffect(() => {
     if (!displayMember?.myid) return;
     let cancelled = false;
@@ -232,75 +226,57 @@ export default function CardsPage() {
   }
 
   function downloadPDF() {
-    if (!cardPngs.latihan || !cardPngs.tugas) return;
-    // Business card size landscape: 90mm × 54mm
-    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [90, 54] });
-    pdf.addImage(cardPngs.latihan, 'PNG', 0, 0, 90, 54);
-    pdf.addPage([90, 54], 'landscape');
-    pdf.addImage(cardPngs.tugas,   'PNG', 0, 0, 90, 54);
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [85, 54] });
+    pdf.addImage(cardPngs.latihan, 'PNG', 0, 0, 85, 54);
+    pdf.addPage([85, 54], 'landscape');
+    pdf.addImage(cardPngs.tugas, 'PNG', 0, 0, 85, 54);
     pdf.save(`kartu-${displayMember?.nickname}.pdf`);
     toast.success('PDF 2 kartu diunduh!');
   }
 
   async function bulkExport() {
     if (!isPengurus || !members.length) return;
-    setLoading(true);
+    setGenLoading(true);
     setBulkProg({ done: 0, total: members.length });
-    const pdf   = new jsPDF({ unit: 'mm', format: 'a4' });
-    const CW = 88, CH = 53, GAP_X = 5, GAP_Y = 6, MARGIN = 10;
-    const COLS = 2, ROWS = 3; // 2×3 = 6 pasang kartu per halaman
-    let pageItem = 0;
+    const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+    const CW = 86, CH = 54, GAP = 4, MARGIN = 10;
+    let itemInRow = 0, currentY = MARGIN;
 
     try {
       for (let i = 0; i < members.length; i++) {
         const m = members[i];
-        if (!m.myid) { setBulkProg(p => ({ ...p, done: i + 1 })); continue; }
-
-        const lUrl = buildQRUrl(m.nickname, m.myid, 'latihan');
-        const tUrl = buildQRUrl(m.nickname, m.myid, 'tugas');
-        const [lQR, tQR] = await Promise.all([makeQR(lUrl), makeQR(tUrl)]);
+        if (!m.myid) { setBulkProg(p => ({...p, done: i+1})); continue; }
+        const [lQR, tQR] = await Promise.all([
+          makeQR(buildQRUrl(m.nickname, m.myid, 'latihan')),
+          makeQR(buildQRUrl(m.nickname, m.myid, 'tugas')),
+        ]);
         const [lPng, tPng] = await Promise.all([
           drawCard(m, lQR, 'latihan'),
           drawCard(m, tQR, 'tugas'),
         ]);
 
-        if (pageItem > 0 && pageItem % (COLS * ROWS) === 0) {
-          pdf.addPage();
+        // 2 kartu per baris (latihan | tugas)
+        const x = MARGIN;
+        if (i > 0 && i % 2 === 0) {
+          currentY += CH + GAP;
+          if (currentY + CH > 297 - MARGIN) { pdf.addPage(); currentY = MARGIN; }
         }
+        const colX = i % 2 === 0 ? x : x + CW + GAP;
+        pdf.addImage(lPng, 'PNG', colX, currentY, CW, CH);
 
-        const row = Math.floor((pageItem % (COLS * ROWS)) / COLS);
-        const col = (pageItem % (COLS * ROWS)) % COLS;
-        const x   = MARGIN + col * (CW + GAP_X);
-        const y   = MARGIN + row * (CH + GAP_Y);
-
-        pdf.addImage(lPng, 'PNG', x, y, CW, CH);
-
-        // Tugas kartu di bawah latihan (same column, offset rows)
-        const y2 = MARGIN + (row + ROWS) * (CH + GAP_Y);
-        if (y2 + CH < 297 - MARGIN) {
-          pdf.addImage(tPng, 'PNG', x, y2, CW, CH);
-        } else {
-          // Next page for tugas
-          pdf.addPage();
-          pdf.addImage(tPng, 'PNG', x, MARGIN, CW, CH);
-        }
-
-        pageItem++;
         setBulkProg({ done: i + 1, total: members.length });
       }
       pdf.save('semua-kartu-sigma.pdf');
-      toast.success(`${members.length} kartu diekspor!`);
-    } catch (err) {
-      toast.error('Gagal: ' + err.message);
+      toast.success(`${members.length} kartu selesai!`);
+    } catch (e) {
+      toast.error('Gagal: ' + e.message);
     } finally {
-      setLoading(false);
-      setBulkProg(null);
+      setGenLoading(false); setBulkProg(null);
     }
   }
 
   const filtered = members.filter(m =>
-    !search ||
-    m.nama_panggilan?.toLowerCase().includes(search.toLowerCase()) ||
+    !search || m.nama_panggilan?.toLowerCase().includes(search.toLowerCase()) ||
     m.nickname?.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -309,26 +285,24 @@ export default function CardsPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="page-title">Kartu Anggota</h1>
-          <p className="page-subtitle">Kartu QR untuk scan absensi · Latihan & Tugas</p>
+          <p className="page-subtitle">QR untuk scan absensi · Latihan & Tugas</p>
         </div>
         {isPengurus && (
-          <button onClick={bulkExport} disabled={loading} className="btn-outline gap-2">
+          <button onClick={bulkExport} disabled={genLoading}
+            className="btn-outline gap-2 transition-all hover:scale-105 active:scale-95">
             <FileDown size={16}/>
-            {loading && bulkProg ? `${bulkProg.done}/${bulkProg.total}...` : 'Bulk Export PDF'}
+            {bulkProg ? `${bulkProg.done}/${bulkProg.total}...` : 'Bulk Export PDF'}
           </button>
         )}
       </div>
 
-      {/* Progress */}
       {bulkProg && (
         <div className="space-y-1">
           <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
             <div className="bg-brand-800 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${Math.round(bulkProg.done / bulkProg.total * 100)}%` }}/>
+              style={{ width: `${Math.round(bulkProg.done/bulkProg.total*100)}%` }}/>
           </div>
-          <p className="text-xs text-gray-500 text-center">
-            Memproses {bulkProg.done} dari {bulkProg.total} kartu...
-          </p>
+          <p className="text-xs text-gray-500 text-center">{bulkProg.done}/{bulkProg.total} kartu</p>
         </div>
       )}
 
@@ -344,11 +318,11 @@ export default function CardsPage() {
             <div className="max-h-80 overflow-y-auto space-y-0.5">
               {filtered.map(m => (
                 <button key={m.id} onClick={() => setSelected(m)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                    selected?.id === m.id ? 'bg-brand-800 text-white' : 'hover:bg-gray-50'
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-all duration-150 hover:scale-[1.01] active:scale-[0.99] ${
+                    selected?.id === m.id ? 'bg-brand-800 text-white shadow-sm' : 'hover:bg-gray-50'
                   }`}>
                   <div className="font-medium">{titleCase(m.nama_panggilan)}</div>
-                  <div className={`text-xs ${selected?.id === m.id ? 'text-brand-200' : 'text-gray-400'}`}>
+                  <div className={`text-xs ${selected?.id===m.id?'text-brand-200':'text-gray-400'}`}>
                     @{m.nickname} · {m.lingkungan}
                   </div>
                 </button>
@@ -357,7 +331,7 @@ export default function CardsPage() {
           </div>
         )}
 
-        <div className={`${isPengurus ? 'lg:col-span-2' : 'lg:col-span-3'} space-y-5`}>
+        <div className={`${isPengurus?'lg:col-span-2':'lg:col-span-3'} space-y-5`}>
           {!displayMember ? (
             <div className="card text-center py-12 text-gray-400">
               <CreditCard size={40} className="mx-auto mb-3 opacity-30"/>
@@ -365,42 +339,30 @@ export default function CardsPage() {
             </div>
           ) : (
             <>
-              {/* Cards side by side */}
-              <div className="flex flex-wrap gap-6 justify-center items-start">
-                {(['latihan', 'tugas'] ).map(type => (
-                  <div key={type} className="flex flex-col items-center gap-3">
-                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              <div className="flex flex-wrap gap-6 justify-center">
+                {['latihan','tugas'].map(type => (
+                  <div key={type} className="flex flex-col items-center gap-3 group">
+                    <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">
                       {type === 'latihan' ? 'Kartu Latihan' : 'Kartu Tugas'}
                     </p>
-
-                    {/* Card preview — 5:3 aspect */}
-                    <div className="w-80 h-48 rounded-2xl overflow-hidden shadow-2xl relative">
-                      {cardPngs[type] ? (
-                        <img src={cardPngs[type]} alt={`Kartu ${type}`}
-                          className="w-full h-full object-cover"/>
-                      ) : (
-                        <div className={`w-full h-full flex items-center justify-center ${
-                          type === 'latihan' ? 'bg-brand-800' : 'bg-amber-50 border-2 border-amber-300'
-                        }`}>
-                          <Loader size={28} className={type === 'latihan' ? 'text-white' : 'text-amber-400'} />
-                        </div>
-                      )}
+                    <div className="w-80 h-[192px] rounded-2xl overflow-hidden shadow-xl transition-all duration-300 group-hover:shadow-2xl group-hover:scale-[1.02]">
+                      {cardPngs[type]
+                        ? <img src={cardPngs[type]} alt="" className="w-full h-full object-cover"/>
+                        : <div className={`w-full h-full flex items-center justify-center ${type==='latihan'?'bg-brand-800':'bg-amber-50 border-2 border-amber-200'}`}>
+                            <Loader size={28} className={type==='latihan'?'text-white animate-spin':'text-amber-400 animate-spin'}/>
+                          </div>
+                      }
                     </div>
-
-                    <button onClick={() => downloadPNG(type)}
-                      disabled={!cardPngs[type]}
-                      className="btn-secondary btn-sm gap-1.5 w-full">
+                    <button onClick={() => downloadPNG(type)} disabled={!cardPngs[type]}
+                      className="btn-secondary btn-sm gap-1.5 w-full transition-all hover:scale-105 active:scale-95 disabled:opacity-40">
                       <Download size={13}/> Download PNG
                     </button>
                   </div>
                 ))}
               </div>
-
-              {/* PDF download */}
               <div className="flex justify-center">
-                <button onClick={downloadPDF}
-                  disabled={!cardPngs.latihan || !cardPngs.tugas}
-                  className="btn-primary gap-2 px-8">
+                <button onClick={downloadPDF} disabled={!cardPngs.latihan||!cardPngs.tugas}
+                  className="btn-primary gap-2 px-8 transition-all hover:scale-105 active:scale-95 disabled:opacity-40">
                   <FileDown size={16}/> Download PDF (2 Kartu)
                 </button>
               </div>
