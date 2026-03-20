@@ -20,6 +20,8 @@ export default function DashboardPage() {
   // Masing-masing loading state terpisah agar tidak semua skeleton jika 1 query gagal
   const [loadingEvents,  setLoadingEvents]  = useState(true);
   const [loadingStats,   setLoadingStats]   = useState(true);
+  const [pengurusStats,  setPengurusStats]  = useState(null);
+  const [loadingPStats,  setLoadingPStats]  = useState(false);
 
   useEffect(() => {
     loadUpcomingEvents();
@@ -28,7 +30,7 @@ export default function DashboardPage() {
       loadMySchedule();
       loadSwapBoard();
       checkOptinWindow();
-      if (isPengurus) loadPendingRegs();
+      if (isPengurus) { loadPendingRegs(); loadPengurusStats(); }
     }
   }, [profile?.id, isPengurus]);
 
@@ -147,6 +149,54 @@ export default function DashboardPage() {
 
   const nama = profile?.nama_panggilan || profile?.nickname || '';
 
+  async function loadPengurusStats() {
+    setLoadingPStats(true);
+    const today = new Date();
+    const monthStart = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-01`;
+    const todayStr   = today.toISOString().split('T')[0];
+
+    const [
+      { count: totalAktif },
+      { count: totalPending },
+      { count: scanBulanIni },
+      { count: jadwalBulanIni },
+      { count: tukarBulanIni },
+    ] = await Promise.all([
+      supabase.from('users').select('*', { count:'exact', head:true })
+        .eq('status','Active').in('role',['Misdinar_Aktif','Misdinar_Retired']),
+      supabase.from('users').select('*', { count:'exact', head:true }).eq('status','Pending'),
+      supabase.from('scan_records').select('*', { count:'exact', head:true })
+        .gte('timestamp', monthStart + 'T00:00:00'),
+      supabase.from('assignments').select('*', { count:'exact', head:true })
+        .gte('created_at', monthStart + 'T00:00:00'),
+      supabase.from('swap_requests').select('*', { count:'exact', head:true })
+        .gte('created_at', monthStart + 'T00:00:00'),
+    ]);
+
+    // Absensi bulan ini: dijadwalkan tapi tidak scan
+    const { data: assignedIds } = await supabase.from('assignments')
+      .select('user_id, events(tanggal_tugas)')
+      .gte('events.tanggal_tugas', monthStart)
+      .lte('events.tanggal_tugas', todayStr);
+    
+    const { data: scannedIds } = await supabase.from('scan_records')
+      .select('user_id').gte('timestamp', monthStart + 'T00:00:00')
+      .in('scan_type', ['tugas','walkin_tugas']);
+
+    const scannedSet = new Set((scannedIds||[]).map(s => s.user_id));
+    const absenCount = (assignedIds||[]).filter(a => a.events && !scannedSet.has(a.user_id)).length;
+
+    setPengurusStats({
+      totalAktif:     totalAktif    || 0,
+      totalPending:   totalPending  || 0,
+      scanBulanIni:   scanBulanIni  || 0,
+      jadwalBulanIni: jadwalBulanIni|| 0,
+      tukarBulanIni:  tukarBulanIni || 0,
+      absenBulanIni:  absenCount,
+    });
+    setLoadingPStats(false);
+  }
+
   return (
     <div className="space-y-6">
       {/* Greeting */}
@@ -157,6 +207,38 @@ export default function DashboardPage() {
           </h1>
           <p className="page-subtitle">Serve the Lord with Gladness</p>
         </div>
+        {/* Statistik pengurus bulan ini */}
+        {isPengurus && (
+          <div className="card">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-bold text-gray-900">📊 Statistik Bulan Ini</h2>
+              {loadingPStats && <div className="w-4 h-4 border-2 border-brand-300 border-t-brand-800 rounded-full animate-spin"/>}
+            </div>
+            {pengurusStats ? (
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+                {[
+                  { label:'Misdinar Aktif',   val: pengurusStats.totalAktif,     color:'bg-brand-50 text-brand-800',   icon:'👥' },
+                  { label:'Pendaftar Baru',    val: pengurusStats.totalPending,   color:'bg-yellow-50 text-yellow-700', icon:'📝' },
+                  { label:'Total Scan',        val: pengurusStats.scanBulanIni,   color:'bg-green-50 text-green-700',   icon:'📷' },
+                  { label:'Jadwal Dibuat',     val: pengurusStats.jadwalBulanIni, color:'bg-blue-50 text-blue-700',     icon:'📅' },
+                  { label:'Tukar Jadwal',      val: pengurusStats.tukarBulanIni,  color:'bg-purple-50 text-purple-700', icon:'🔄' },
+                  { label:'Absen Bulan Ini',   val: pengurusStats.absenBulanIni,  color:'bg-red-50 text-red-700',       icon:'❌' },
+                ].map(s => (
+                  <div key={s.label} className={`${s.color} rounded-xl p-3 text-center`}>
+                    <div className="text-base">{s.icon}</div>
+                    <div className="text-2xl font-black">{s.val}</div>
+                    <div className="text-[10px] font-medium mt-0.5 opacity-80 leading-tight">{s.label}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+                {[1,2,3,4,5,6].map(i => <div key={i} className="skeleton h-20 rounded-xl"/>)}
+              </div>
+            )}
+          </div>
+        )}
+
         {isPengurus && pendingRegs > 0 && (
           <Link to="/anggota" className="flex items-center gap-2 bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2 hover:bg-yellow-100 transition-colors">
             <Bell size={16} className="text-yellow-600" />

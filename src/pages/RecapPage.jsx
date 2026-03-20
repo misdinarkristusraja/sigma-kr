@@ -41,7 +41,44 @@ function dateCutoff(months) {
   return toLocalISO(d);
 }
 
-// ─── Kalkulasi rekap real-time ────────────────────────────
+// ─── Raw count rekap (sesuai format Excel) ────────────────
+// Jadwal = berapa kali dijadwalkan
+// Latihan = berapa kali scan latihan valid
+// Tugas = berapa kali scan tugas valid  
+// Tukar = berapa kali mengajukan swap
+function buildRawRekap({ assignments, scans, swaps, dateFrom, dateTo }) {
+  const jadwal  = (assignments||[]).filter(a => {
+    const tgl = a.tanggal_tugas || a.tanggal_latihan;
+    if (!tgl) return false;
+    if (dateFrom && tgl < dateFrom) return false;
+    if (dateTo   && tgl > dateTo)   return false;
+    return true;
+  }).length;
+
+  const latihan = (scans||[]).filter(s => {
+    const ds = s.timestamp?.split('T')[0];
+    if (!ds || (dateFrom && ds < dateFrom) || (dateTo && ds > dateTo)) return false;
+    return s.scan_type === 'latihan' || s.scan_type === 'walkin_latihan';
+  }).length;
+
+  const tugas = (scans||[]).filter(s => {
+    const ds = s.timestamp?.split('T')[0];
+    if (!ds || (dateFrom && ds < dateFrom) || (dateTo && ds > dateTo)) return false;
+    return s.scan_type === 'tugas' || s.scan_type === 'walkin_tugas';
+  }).length;
+
+  const tukar = (swaps||[]).filter(sw => {
+    if (!sw.created_at) return true;
+    const ds = sw.created_at.split('T')[0];
+    if (dateFrom && ds < dateFrom) return false;
+    if (dateTo   && ds > dateTo)   return false;
+    return true;
+  }).length;
+
+  return { jadwal, latihan, tugas, tukar, total: jadwal + latihan + tugas };
+}
+
+// ─── Kalkulasi rekap real-time (K1-K6 poin) ──────────────
 function buildRekap({ assignments, scans, dateFrom, dateTo }) {
   const weeks = {};
 
@@ -111,6 +148,7 @@ export default function RecapPage() {
   const [allRekap,    setAllRekap]= useState([]);
   const [allLoading,  setAllLoad] = useState(false);
   const [lastUpdate,  setLastUpd] = useState(null);
+  const [rawRekap,    setRawRekap] = useState(null);  // { jadwal, latihan, tugas, tukar }
 
   // Load member list
   useEffect(() => {
@@ -148,8 +186,23 @@ export default function RecapPage() {
     const rekap  = buildRekap({ assignments: filteredAssigns, scans: scans || [], dateFrom, dateTo });
     const harian = buildRekapHarian(scans || [], dateFrom, dateTo);
 
+    // Raw rekap counts (sesuai format Excel)
+    const { data: swapsData } = await supabase
+      .from('swap_requests')
+      .select('created_at, status')
+      .eq('requester_id', uid);
+    
+    const raw = buildRawRekap({
+      assignments: filteredAssigns,
+      scans:       scans || [],
+      swaps:       swapsData || [],
+      dateFrom,
+      dateTo,
+    });
+
     setRekap(rekap);
     setHarian(harian);
+    setRawRekap(raw);
     setLastUpd(new Date());
     setLoading(false);
   }, [selUser, profile?.id, dateFrom, dateTo]);
@@ -344,6 +397,33 @@ export default function RecapPage() {
                   </div>
                 ))}
               </div>
+
+              {/* Raw rekap counts — sesuai format Excel */}
+              {rawRekap && (
+                <div className="card">
+                  <h3 className="font-semibold text-gray-700 mb-3 text-sm">📋 Rekap Kehadiran</h3>
+                  <div className="grid grid-cols-4 gap-3">
+                    {[
+                      { label: 'Dijadwalkan', val: rawRekap.jadwal,  color: 'bg-brand-50 text-brand-800',   icon: '📅' },
+                      { label: 'Hadir Latihan',val: rawRekap.latihan, color: 'bg-blue-50 text-blue-700',    icon: '🏋️' },
+                      { label: 'Hadir Tugas',  val: rawRekap.tugas,   color: 'bg-green-50 text-green-700',  icon: '⛪' },
+                      { label: 'Tukar Jadwal', val: rawRekap.tukar,   color: 'bg-purple-50 text-purple-700',icon: '🔄' },
+                    ].map(c => (
+                      <div key={c.label} className={`${c.color} rounded-xl p-3 text-center`}>
+                        <div className="text-lg">{c.icon}</div>
+                        <div className="text-2xl font-black mt-1">{c.val}</div>
+                        <div className="text-xs mt-0.5 font-medium opacity-80">{c.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-2">
+                    Total partisipasi: <strong>{rawRekap.jadwal + rawRekap.latihan + rawRekap.tugas}</strong> kali
+                    {rawRekap.jadwal > 0 && rawRekap.tugas > 0 && (
+                      <span className="ml-2">· Tingkat kehadiran tugas: <strong>{Math.round(rawRekap.tugas/rawRekap.jadwal*100)}%</strong></span>
+                    )}
+                  </p>
+                </div>
+              )}
 
               {/* Breakdown kondisi — label ramah */}
               <div className="card">

@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { parseQRValue } from '../lib/utils';
 import {
   CheckCircle, XCircle, AlertTriangle, Camera, QrCode,
-  Clock, Shield, ChevronDown, ChevronUp,
+  Clock, Shield, Keyboard, User,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -116,6 +116,9 @@ export default function ScanPage() {
   const [camError,  setCamError]  = useState('');
   // Untuk override admin: data scan yang menunggu konfirmasi
   const [pendingOverride, setPendingOverride] = useState(null);
+  const [showManual,      setShowManual]      = useState(false);
+  const [manualNick,      setManualNick]      = useState('');
+  const [manualLoading,   setManualLoading]   = useState(false);
 
   const startCamera = useCallback(async () => {
     setCamError('');
@@ -336,6 +339,51 @@ export default function ScanPage() {
     }, 1000);
   }
 
+  // ── Input manual (tanpa kartu) ──────────────────────────
+  async function handleManualInput(e) {
+    e.preventDefault();
+    if (!manualNick.trim()) return;
+    setManualLoading(true);
+    stopCamera();
+
+    // Cari user berdasarkan nickname
+    const { data: member } = await supabase
+      .from('users')
+      .select('id, nickname, myid, nama_panggilan, lingkungan, role, status, is_suspended')
+      .eq('nickname', manualNick.trim().toLowerCase())
+      .maybeSingle();
+
+    if (!member) {
+      toast.error(`Username "${manualNick}" tidak ditemukan`);
+      setManualLoading(false);
+      return;
+    }
+    if (member.is_suspended) {
+      toast.error(`${member.nama_panggilan} sedang disuspend`);
+      setManualLoading(false);
+      return;
+    }
+
+    // Gunakan proses yang sama dengan QR tapi dengan is_anomaly = true (manual)
+    // Buat parsed object seolah QR
+    const fakeParsed = { nickname: member.nickname, myid: member.myid, type: 'tugas', version: 'manual' };
+
+    setShowManual(false);
+    setManualNick('');
+    setManualLoading(false);
+
+    // Override langsung — input manual selalu dianggap admin/PIC override
+    setPendingOverride({
+      member,
+      parsed: fakeParsed,
+      raw: `manual:${member.nickname}`,
+      isAnomaly: true,
+      events: [],
+      reason: `Input manual oleh ${profile?.nama_panggilan} (tanpa kartu QR)`,
+      allowWalkIn: true,
+    });
+  }
+
   function handleReset() {
     setResult(null); setWalkIn(null); setPendingOverride(null);
     setCountdown(0); clearInterval(returnRef.current);
@@ -361,14 +409,56 @@ export default function ScanPage() {
         </div>
         <div className="flex items-center gap-2">
           {isAdmin && <span className="text-xs bg-brand-800 text-white px-2 py-0.5 rounded-lg">Admin</span>}
+          <button
+            onClick={() => { stopCamera(); setShowManual(v => !v); setResult(null); setPendingOverride(null); }}
+            className="flex items-center gap-1 text-xs bg-gray-800 text-gray-300 hover:bg-gray-700 px-2 py-1 rounded-lg transition-colors"
+            title="Input manual (tanpa kartu)">
+            <Keyboard size={13}/> Manual
+          </button>
           <span className="text-xs text-gray-400">{profile?.nama_panggilan}</span>
         </div>
       </div>
 
       <div className="flex-1 flex items-center justify-center relative p-4">
 
+        {/* Manual input form */}
+        {showManual && !result && !pendingOverride && (
+          <div className="bg-gray-900 rounded-2xl p-6 max-w-sm w-full">
+            <div className="text-center mb-4">
+              <div className="w-12 h-12 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-2">
+                <Keyboard size={22} className="text-brand-400"/>
+              </div>
+              <h3 className="text-white font-bold">Input Manual</h3>
+              <p className="text-gray-400 text-xs mt-1">Untuk anggota yang tidak membawa kartu QR</p>
+            </div>
+            <form onSubmit={handleManualInput} className="space-y-3">
+              <div>
+                <label className="text-gray-400 text-xs mb-1 block">Username / Nickname</label>
+                <input
+                  type="text"
+                  className="w-full bg-gray-800 text-white rounded-xl px-4 py-3 text-sm border border-gray-700 focus:border-brand-500 focus:outline-none placeholder-gray-500"
+                  placeholder="Contoh: rafa, satrio, beni..."
+                  value={manualNick}
+                  onChange={e => setManualNick(e.target.value.toLowerCase().trim())}
+                  autoFocus
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                />
+              </div>
+              <button type="submit" disabled={manualLoading || !manualNick.trim()}
+                className="w-full py-3 bg-brand-800 hover:bg-brand-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
+                {manualLoading ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> Mencari...</> : <><User size={15}/> Cari &amp; Scan Manual</>}
+              </button>
+              <button type="button" onClick={() => { setShowManual(false); startCamera(); }}
+                className="w-full py-2 text-gray-400 text-sm hover:text-white">
+                ← Kembali ke Kamera
+              </button>
+            </form>
+          </div>
+        )}
+
         {/* Camera */}
-        {!result && !walkIn && !pendingOverride && (
+        {!showManual && !result && !walkIn && !pendingOverride && (
           <div className="relative">
             <video ref={videoRef} className="max-w-full max-h-[70vh] rounded-xl" playsInline muted/>
             <canvas ref={canvasRef} className="hidden"/>

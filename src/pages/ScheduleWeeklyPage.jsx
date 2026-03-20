@@ -832,6 +832,28 @@ export default function ScheduleWeeklyPage() {
                   </div>
                 </div>
 
+                {/* Pelatih Piket */}
+                {picOptions.filter(p => {
+                  // Show Pelatih who are PIC in any slot of this event
+                  const pNicks = [1,2,3,4].flatMap(s => [ev[`pic_slot_${s}a`], ev[`pic_slot_${s}b`]]).filter(Boolean);
+                  const pelatihNicks = picOptions.filter(u => u.role === 'Pelatih').map(u => u.nickname);
+                  return pNicks.some(n => pelatihNicks.includes(n)) && pelatihNicks.includes(p.nickname) && pNicks.includes(p.nickname);
+                }).length > 0 && (
+                  <div className="mb-3 p-2 bg-blue-50 rounded-xl border border-blue-100">
+                    <p className="text-xs font-semibold text-blue-700 mb-1">👤 Pelatih Piket</p>
+                    <div className="flex flex-wrap gap-1">
+                      {[1,2,3,4].flatMap(s => [ev[`pic_slot_${s}a`], ev[`pic_slot_${s}b`]]).filter(Boolean)
+                        .filter((n,i,arr) => arr.indexOf(n) === i) // deduplicate
+                        .filter(n => picOptions.find(p => p.nickname === n && p.role === 'Pelatih'))
+                        .map(nick => {
+                          const p = picOptions.find(u => u.nickname === nick);
+                          return <span key={nick} className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-lg font-medium">{p?.nama_panggilan || nick}</span>;
+                        })
+                      }
+                    </div>
+                  </div>
+                )}
+
                 {/* Slot cards */}
                 <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
                   {[1,2,3,4].map(slot => {
