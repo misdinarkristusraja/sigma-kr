@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { toNickname, formatHP, PENDIDIKAN_OPTIONS } from '../lib/utils';
+import { toNickname, formatHP, PENDIDIKAN_OPTIONS, generateNickname } from '../lib/utils';
 import { Church, Upload, CheckCircle, AlertCircle, ChevronDown } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -52,7 +52,7 @@ export default function RegisterPage() {
   function handleNamaChange(val) {
     setForm(f => ({ ...f, nama_lengkap: val }));
     if (!form.nickname) {
-      const suggested = toNickname(val.split(' ')[0]);
+      const suggested = generateNickname(val);
       if (suggested) {
         setForm(f => ({ ...f, nickname: suggested }));
         checkNickname(suggested);
@@ -210,21 +210,31 @@ export default function RegisterPage() {
               value={form.nama_lengkap} onChange={e => handleNamaChange(e.target.value)} placeholder="Nama sesuai baptis" />
           </F>
 
-          <F name="nickname" label="Nama Panggilan (Username)" required hint="Lowercase, tanpa spasi. Contoh: satrio">
-            <div className="relative">
-              <input
-                className={`input ${errors.nickname ? 'input-error' : ''}`}
-                value={form.nickname}
-                onChange={e => { setForm(f => ({...f, nickname: toNickname(e.target.value)})); checkNickname(toNickname(e.target.value)); }}
-                placeholder="satrio"
-              />
-              {nicknameStatus === 'checking' && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-gray-300 border-t-brand-800 rounded-full animate-spin" />
-              )}
-              {nicknameStatus === 'ok' && <CheckCircle size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-green-500" />}
-              {nicknameStatus === 'taken' && <AlertCircle size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500" />}
+          <F name="nickname" label="Nama Panggilan (Username)" required hint="Otomatis dari nama baptis. Bisa diubah manual.">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  className={`input ${errors.nickname ? 'input-error' : ''}`}
+                  value={form.nickname}
+                  onChange={e => { setForm(f => ({...f, nickname: toNickname(e.target.value)})); checkNickname(toNickname(e.target.value)); }}
+                  placeholder="satrio"
+                />
+                {nicknameStatus === 'checking' && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-gray-300 border-t-brand-800 rounded-full animate-spin" />
+                )}
+                {nicknameStatus === 'ok' && <CheckCircle size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-green-500" />}
+                {nicknameStatus === 'taken' && <AlertCircle size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500" />}
+              </div>
+              <button type="button"
+                onClick={() => {
+                  const s = generateNickname(form.nama_lengkap);
+                  if (s) { setForm(f => ({...f, nickname: s})); checkNickname(s); }
+                }}
+                className="btn-outline btn-sm px-3 text-xs whitespace-nowrap">
+                ✨ Generate
+              </button>
             </div>
-            {nicknameStatus === 'taken' && <p className="text-xs text-red-500 mt-1">Sudah dipakai. Coba: {form.nickname}_{Math.floor(Math.random()*99)+1}</p>}
+            {nicknameStatus === 'taken' && <p className="text-xs text-red-500 mt-1">Sudah dipakai. Coba tambahkan angka di belakang.</p>}
           </F>
 
           <div className="grid grid-cols-2 gap-3">

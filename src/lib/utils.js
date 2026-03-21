@@ -123,6 +123,44 @@ export function toNickname(str) {
   return str.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
 }
 
+/**
+ * Generate nickname dari nama lengkap — pakai nama baptis (kata pertama) saja
+ * Contoh: "Stefanus Gerrard Van Creidoagape" → "gerrard"
+ *         "Maria Ratu Rosari Suci"            → "ratu"  (skip "Maria")
+ *         "Andreas Antonio Tius Halawa"       → "andreas"
+ *
+ * Logika:
+ *   1. Split nama jadi kata-kata
+ *   2. Skip kata pertama jika itu nama santo/santa umum (Maria, Yohanes, dst)
+ *   3. Pakai kata pertama yang tersisa, lowercase, strip non-alpha
+ */
+const SKIP_NAMES = new Set([
+  'maria','yohanes','johanes','fransiskus','benediktus','benedictus',
+  'antonius','antonius','stefanus','stephanus','christianus','kristianus',
+  'thomas','yusuf','mikael','michael','gabriel','raphaël','raphael',
+  'theresia','theresia','margaretha','margareta','catharina','katarina',
+  'augustinus','dominikus','ignatius','aloysius','robertus','sebastianus',
+  'veronika','veronica','monika','monica','cecilia','sesilia','rosaria',
+  'immaculata','immaculata','agatha','agata','clara','klara',
+  'petrus','paulus','yakobus','bartholomeus','simon','taddeus',
+  'venantius','bonaventura','hieronymus','ambrosius','gregorius',
+]);
+
+export function generateNickname(namaLengkap) {
+  if (!namaLengkap?.trim()) return '';
+  const kata = namaLengkap.trim().toLowerCase()
+    .replace(/[^a-z\s]/g, '')  // strip non-alpha
+    .split(/\s+/)
+    .filter(k => k.length > 0);
+
+  if (kata.length === 0) return '';
+
+  // Cari kata pertama yang bukan nama santo/santa umum
+  const picked = kata.find(k => !SKIP_NAMES.has(k)) || kata[0];
+  return picked.slice(0, 20); // max 20 char
+}
+
+
 export function capitalize(str) {
   return str?.charAt(0).toUpperCase() + str?.slice(1).toLowerCase();
 }

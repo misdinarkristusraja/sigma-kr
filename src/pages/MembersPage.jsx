@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { truncate, ROLE_LABELS, STATUS_LABELS, formatDate, buildWALink, generateMyID } from '../lib/utils';
+import { truncate, ROLE_LABELS, STATUS_LABELS, formatDate, buildWALink, generateMyID, generateNickname } from '../lib/utils';
 import {
   Search, CheckCircle, XCircle, Eye,
   Download, RefreshCw, AlertTriangle, Users,
