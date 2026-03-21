@@ -1,0 +1,43 @@
+name: SIGMA — Build Check
+
+# ─────────────────────────────────────────────────────────────
+# CATATAN: Deploy ke Vercel dilakukan OTOMATIS oleh Vercel
+# GitHub Integration (bukan workflow ini).
+# Workflow ini hanya memastikan build tidak broken saat PR/push.
+# Tidak perlu VERCEL_TOKEN atau CLI apapun.
+# ─────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-check:
+    name: Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL:      ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-key' }}
+          VITE_APP_URL:           ${{ secrets.VITE_APP_URL || 'https://sigma.krsoba.id' }}
+          VITE_MYID_SALT:         ${{ secrets.VITE_MYID_SALT || 'placeholder-salt-32-chars' }}
+          VITE_ENV:               production
+
+      - name: Done
+        run: echo "Build OK - Vercel auto-deploy via GitHub Integration"

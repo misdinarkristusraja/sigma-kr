@@ -5,9 +5,8 @@ import { supabase } from '../lib/supabase';
 import { formatDate, getLiturgyClass, buildWALink } from '../lib/utils';
 import {
   Calendar, Clock, Trophy, ArrowLeftRight, QrCode,
-  CheckCircle, AlertTriangle, ChevronRight, Star, Zap, Bell, CalendarPlus,
+  CheckCircle, AlertTriangle, ChevronRight, Star, Zap, Bell,
 } from 'lucide-react';
-import { exportToGCal } from '../lib/calendarExport';
 
 export default function DashboardPage() {
   const { profile, isPengurus, isPelatih } = useAuth();
@@ -319,23 +318,10 @@ export default function DashboardPage() {
                 {mySchedule.map((a, i) => (
                   <div key={i} className="flex items-center gap-3 p-3 bg-brand-50 rounded-xl">
                     <CheckCircle size={16} className="text-brand-800 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
+                    <div>
                       <p className="text-sm font-semibold text-gray-900">{a.events?.perayaan || a.events?.nama_event}</p>
                       <p className="text-xs text-gray-500">{formatDate(a.events?.tanggal_tugas, 'EEEE, dd MMM')} · Slot {a.slot_number}</p>
                     </div>
-                    <button
-                      onClick={() => exportToGCal({
-                        title: `[SIGMA] Tugas Misa Slot ${a.slot_number}`,
-                        description: `Jadwal tugas misa\nEvent: ${a.events?.perayaan || a.events?.nama_event}`,
-                        startDate: a.events?.tanggal_tugas
-                          ? `${a.events.tanggal_tugas}T${a.slot_number<=1?'17:30':a.slot_number===2?'06:00':a.slot_number===3?'08:00':'17:30'}`
-                          : new Date().toISOString(),
-                      })}
-                      className="p-1.5 rounded-lg hover:bg-brand-100 transition-colors flex-shrink-0"
-                      title="Tambah ke Google Calendar"
-                    >
-                      <CalendarPlus size={15} className="text-brand-700"/>
-                    </button>
                   </div>
                 ))}
               </div>

@@ -22,9 +22,6 @@ const AdminPage          = lazy(() => import('./pages/AdminPage'));
 const ReregistrationPage = lazy(() => import('./pages/ReregistrationPage'));
 const StatistikPage      = lazy(() => import('./pages/StatistikPage'));
 const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
-const MonthlyReportPage  = lazy(() => import('./pages/MonthlyReportPage'));
-const SpecialMassPage    = lazy(() => import('./pages/SpecialMassPage'));
-const StreakPage          = lazy(() => import('./pages/StreakPage'));
 const PublicSchedule     = lazy(() => import('./pages/ScheduleDailyPage').then(m => ({ default: m.PublicSchedulePage })));
 const NotFound           = lazy(() => import('./pages/ScheduleDailyPage').then(m => ({ default: m.NotFoundPage })));
 
@@ -81,9 +78,6 @@ function AppRoutes() {
             <Route path="/statistik"      element={<ProtectedRoute roles={PENG}><ErrorBoundary><StatistikPage/></ErrorBoundary></ProtectedRoute>}/>
             <Route path="/migrasi"        element={<ProtectedRoute roles={ADMIN}><ErrorBoundary><MigrationPage/></ErrorBoundary></ProtectedRoute>}/>
             <Route path="/admin"          element={<ProtectedRoute roles={ADMIN}><ErrorBoundary><AdminPage/></ErrorBoundary></ProtectedRoute>}/>
-            <Route path="/laporan-bulanan"  element={<ProtectedRoute roles={PENG}><ErrorBoundary><MonthlyReportPage/></ErrorBoundary></ProtectedRoute>}/>
-            <Route path="/latihan-khusus"   element={<ErrorBoundary><SpecialMassPage/></ErrorBoundary>}/>
-            <Route path="/streak"           element={<ErrorBoundary><StreakPage/></ErrorBoundary>}/>
           </Route>
 
           <Route path="*" element={<NotFound/>}/>

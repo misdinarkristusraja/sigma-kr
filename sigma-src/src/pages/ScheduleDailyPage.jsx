@@ -7,10 +7,9 @@ import { toPng } from 'html-to-image';
 import {
   CalendarDays, Download, Zap, ChevronLeft, ChevronRight,
   Bell, CheckCircle, XCircle, Clock, RefreshCw, Users,
-  AlertTriangle, FileEdit, Globe, Check, X, Edit2, Search, Church, CalendarPlus,
+  AlertTriangle, FileEdit, Globe, Check, X, Edit2, Search, Church,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { exportToGCal } from '../lib/calendarExport';
 
 const MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 const HARI   = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];

@@ -6,9 +6,8 @@ import { toPng } from 'html-to-image';
 import {
   Calendar, Download, Send, Edit2, Check, X,
   ChevronLeft, ChevronRight, Zap, AlertTriangle, Trash2,
-  FileEdit, Globe, Lock, UserCheck, RefreshCw, CalendarPlus,
+  FileEdit, Globe, Lock, UserCheck, RefreshCw,
 } from 'lucide-react';
-import { exportToGCal, exportToICS } from '../lib/calendarExport';
 import toast from 'react-hot-toast';
 
 // ─── Konstanta ─────────────────────────────────────────────────────────────
@@ -1028,23 +1027,6 @@ export default function ScheduleWeeklyPage() {
                     }
                     <button onClick={()=>{setWaText(generateWAText(ev));setShowWA(true);}} className="btn-outline btn-sm gap-1"><Send size={13}/> WA</button>
                     <button onClick={()=>exportPNG(ev)} className="btn-outline btn-sm gap-1"><Download size={13}/> PNG</button>
-                    <button onClick={()=>{
-                      // Build events dari semua slot yang ada assignee-nya
-                      const SLOT_TIMES = {1:{d:'saturday',t:'17:30'},2:{d:'sunday',t:'06:00'},3:{d:'sunday',t:'08:00'},4:{d:'sunday',t:'17:30'}};
-                      const calEvents = [1,2,3,4].filter(s=>ev[`pic_slot_${s}a`]||ev.tanggal_tugas).map(s=>{
-                        const isWeekend = s===1;
-                        const baseDate = isWeekend ? ev.tanggal_sabtu || ev.tanggal_tugas : ev.tanggal_tugas;
-                        return {
-                          title:`[SIGMA] Tugas Misa Slot ${s}`,
-                          description:`Jadwal tugas misa sebagai misdinar\nEvent: ${ev.perayaan||'Misa Mingguan'}`,
-                          location:'Gereja Kristus Raja Solo Baru',
-                          startDate:baseDate?`${baseDate}T${SLOT_TIMES[s].t}`:null,
-                          category:'TUGAS MISA',
-                        };
-                      }).filter(e=>e.startDate);
-                      if(calEvents.length) exportToICS(calEvents,`jadwal-${ev.tanggal_tugas}.ics`);
-                      else toast.error('Tanggal event belum ada');
-                    }} className="btn-outline btn-sm gap-1"><CalendarPlus size={13}/> .ics</button>
                     <button onClick={()=>setDeleteConf(ev)} className="btn-ghost p-2 text-red-500 hover:bg-red-50"><Trash2 size={15}/></button>
                   </div>
                 </div>

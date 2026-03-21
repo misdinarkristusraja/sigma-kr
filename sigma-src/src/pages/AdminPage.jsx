@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Settings, Save, RefreshCw, Shield, Users, Database, Bell, KeyRound, MessageCircle, Send, Flame } from 'lucide-react';
-import { broadcastNotification, sendNotification } from '../hooks/useNotifications';
+import { Settings, Save, RefreshCw, Shield, Users, Database, Bell, KeyRound, MessageCircle, Send } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const CONFIG_GROUPS = {
@@ -11,148 +10,9 @@ const CONFIG_GROUPS = {
   'Tukar Jadwal':       ['swap_expire_hours'],
   'Suspend':            ['max_absen_before_suspend','suspend_duration_days'],
   'Liturgi':            ['gcatholic_url'],
-  'Gamifikasi':         ['streak_feature_enabled'],
 };
 
-// ─── Tab Notifikasi & Gamifikasi ─────────────────────────────────────────
-function NotifAdminTab() {
-  const [title,    setTitle]    = React.useState('');
-  const [body,     setBody]     = React.useState('');
-  const [type,     setType]     = React.useState('pengumuman');
-  const [sending,  setSending]  = React.useState(false);
-  const [recalc,   setRecalc]   = React.useState(false);
-  const [lastResult, setResult] = React.useState('');
-
-  const handleBroadcast = async () => {
-    if (!title || !body) { toast.error('Judul & isi notifikasi wajib diisi'); return; }
-    setSending(true);
-    try {
-      await broadcastNotification({ title, body, type });
-      toast.success('Notifikasi dikirim ke semua anggota aktif!');
-      setTitle(''); setBody('');
-    } catch (err) {
-      toast.error('Gagal kirim notifikasi');
-    }
-    setSending(false);
-  };
-
-  const handleRecalcStreak = async () => {
-    setRecalc(true);
-    try {
-      const { data, error } = await supabase.rpc('recalculate_all_streaks');
-      if (error) throw error;
-      setResult(data || 'Selesai');
-      toast.success(data || 'Streak berhasil dihitung ulang');
-    } catch {
-      toast.error('Gagal hitung ulang streak');
-    }
-    setRecalc(false);
-  };
-
-  const TYPE_OPTS = [
-    { value: 'pengumuman', label: '📢 Pengumuman' },
-    { value: 'jadwal',     label: '📅 Jadwal' },
-    { value: 'latihan',    label: '🎵 Latihan' },
-    { value: 'streak',     label: '🔥 Streak' },
-  ];
-
-  return (
-    <div className="space-y-6">
-      {/* Broadcast Notifikasi */}
-      <div className="card">
-        <div className="flex items-center gap-2 mb-4">
-          <Bell size={18} className="text-brand-800"/>
-          <h3 className="font-semibold text-gray-800">Broadcast Notifikasi ke Semua Anggota</h3>
-        </div>
-        <div className="space-y-3">
-          <div className="grid sm:grid-cols-2 gap-3">
-            <div>
-              <label className="label text-xs">Judul Notifikasi *</label>
-              <input value={title} onChange={e => setTitle(e.target.value)}
-                className="input" placeholder="cth: Jadwal Latihan Natal"/>
-            </div>
-            <div>
-              <label className="label text-xs">Tipe</label>
-              <select value={type} onChange={e => setType(e.target.value)} className="input">
-                {TYPE_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="label text-xs">Isi Notifikasi *</label>
-            <textarea value={body} onChange={e => setBody(e.target.value)}
-              className="input resize-none" rows={3}
-              placeholder="cth: Latihan Natal akan dilaksanakan Sabtu 20 Des pukul 09.00 WIB di Gereja..."/>
-          </div>
-          <div className="flex items-start gap-3">
-            <button onClick={handleBroadcast} disabled={sending || !title || !body}
-              className="btn-primary gap-2">
-              <Send size={15}/>
-              {sending ? 'Mengirim…' : 'Kirim ke Semua Anggota'}
-            </button>
-            <p className="text-xs text-gray-400 mt-2">
-              Notifikasi akan muncul di ikon lonceng setiap anggota aktif.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Streak Management */}
-      <div className="card">
-        <div className="flex items-center gap-2 mb-4">
-          <Flame size={18} className="text-orange-500"/>
-          <h3 className="font-semibold text-gray-800">Manajemen Streak Gamifikasi</h3>
-        </div>
-        <div className="space-y-4">
-          <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-sm text-amber-800">
-            <p className="font-medium mb-1">🔒 Fitur ini akan dipublish pertengahan April</p>
-            <p className="text-xs text-amber-700">
-              Aktifkan <code className="bg-amber-100 px-1 rounded">streak_feature_enabled</code> di tab
-              Konfigurasi untuk menampilkan menu Streak ke semua anggota.
-              Streak tetap dihitung di balik layar meski belum dipublish.
-            </p>
-          </div>
-
-          <div>
-            <p className="text-sm text-gray-700 mb-2">
-              Hitung ulang streak semua anggota berdasarkan rekap_poin_mingguan &
-              absensi latihan wajib. Jalankan ini setelah scan absensi selesai.
-            </p>
-            <div className="flex items-center gap-3">
-              <button onClick={handleRecalcStreak} disabled={recalc}
-                className="btn-outline gap-2">
-                <RefreshCw size={15} className={recalc ? 'animate-spin' : ''}/>
-                {recalc ? 'Menghitung…' : 'Hitung Ulang Semua Streak'}
-              </button>
-              {lastResult && (
-                <span className="text-sm text-green-700 font-medium">✅ {lastResult}</span>
-              )}
-            </div>
-          </div>
-
-          <div className="grid sm:grid-cols-2 gap-3 pt-2 border-t border-gray-100">
-            <div className="p-3 bg-gray-50 rounded-xl text-sm">
-              <p className="font-medium text-gray-700">Badge Otomatis</p>
-              <p className="text-xs text-gray-500 mt-1">
-                Badge diberikan otomatis saat recalculate dijalankan.
-                Tidak ada notifikasi badge dikirim ke anggota sebelum fitur dipublish.
-              </p>
-            </div>
-            <div className="p-3 bg-gray-50 rounded-xl text-sm">
-              <p className="font-medium text-gray-700">Cara Aktifkan</p>
-              <ol className="text-xs text-gray-500 mt-1 space-y-0.5 list-decimal list-inside">
-                <li>Buka tab ⚙️ Konfigurasi</li>
-                <li>Cari grup "Gamifikasi"</li>
-                <li>Set <code>streak_feature_enabled</code> = <code>true</code></li>
-                <li>Save</li>
-              </ol>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+// ─── Komponen: Quick Test Reset ──────────────────────────────
 function QuickTestReset({ members, genPassword, onReset }) {
   const [selUser,  setSelUser]  = React.useState('');
   const [tempPw,   setTempPw]   = React.useState('');
@@ -514,7 +374,7 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
 
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit flex-wrap">
-        {[{key:'config',label:'⚙️ Konfigurasi'},{key:'users',label:'👥 User & Role'},{key:'passwords',label:'🔑 Kirim Password'},{key:'notif',label:'📢 Notifikasi'},{key:'audit',label:'📋 Audit Log'}].map(t => (
+        {[{key:'config',label:'⚙️ Konfigurasi'},{key:'users',label:'👥 User & Role'},{key:'passwords',label:'🔑 Kirim Password'},{key:'audit',label:'📋 Audit Log'}].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${tab===t.key?'bg-white text-brand-800 shadow-sm':'text-gray-500'}`}>
             {t.label}
@@ -799,10 +659,6 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
             </div>
           </div>
         </div>
-      )}
-
-      {tab === 'notif' && (
-        <NotifAdminTab/>
       )}
 
       {tab === 'audit' && (
