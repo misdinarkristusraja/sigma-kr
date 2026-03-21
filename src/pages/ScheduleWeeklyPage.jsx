@@ -118,7 +118,7 @@ function parseLiturgiHTML(html, year) {
 }
 
 // ─── Export PNG template (format tabel seperti contoh) ─────────────────────
-function buildExportHTML(ev, assignments) {
+function buildExportHTML(ev, assignments, pelatihOptions = []) {
   const bySlot = {};
   for (let s = 1; s <= 4; s++) bySlot[s] = assignments.filter(a => a.slot_number === s);
 
@@ -180,6 +180,47 @@ function buildExportHTML(ev, assignments) {
     }
   }
 
+  // ── Pelatih Piket — tampil di bawah tabel ─────────────────
+  const pelatihNicks = [ev.pelatih_slot_1, ev.pelatih_slot_2, ev.pelatih_slot_3].filter(Boolean);
+  let pelatihSection = '';
+  if (pelatihNicks.length > 0) {
+    const pelatihCells = pelatihNicks.map((nick, i) => {
+      const found = pelatihOptions.find(p => p.nickname === nick);
+      const nama  = found?.nama_panggilan || nick;
+      const hp    = found?.hp_anak || found?.hp_ortu || '';
+      return `
+        <td style="
+          border:1px solid #bbb; padding:8px 14px; text-align:center;
+          font-size:11px; background:#f0f7ff; width:${Math.floor(100/pelatihNicks.length)}%;">
+          <div style="font-weight:bold; font-size:12px; color:#1a3a5c;">${nama.toUpperCase()}</div>
+          <div style="color:#555; font-size:10px; margin-top:2px;">@${nick}${hp ? ' · ' + hp : ''}</div>
+        </td>`;
+    }).join('');
+
+    // Pad empty cells jika pelatih < 3
+    const emptyCount = 3 - pelatihNicks.length;
+    const emptyCells = Array(emptyCount).fill('')
+      .map(() => `<td style="border:1px solid #bbb;padding:8px;background:#f0f7ff;"></td>`)
+      .join('');
+
+    pelatihSection = `
+      <table style="width:100%; border-collapse:collapse; border:2px solid #333; margin-top:10px;">
+        <thead>
+          <tr>
+            <th colspan="3" style="
+              border:2px solid #333; padding:8px 12px; text-align:center;
+              font-size:12px; font-weight:bold; letter-spacing:0.5px;
+              background:#1a3a5c; color:#fff;">
+              PELATIH PIKET
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>${pelatihCells}${emptyCells}</tr>
+        </tbody>
+      </table>`;
+  }
+
   return `
     <div style="font-family:'Arial',sans-serif; width:900px; padding:20px; background:white;">
       <table style="width:100%; border-collapse:collapse; border:2px solid #333;">
@@ -200,6 +241,7 @@ function buildExportHTML(ev, assignments) {
         </thead>
         <tbody>${rows}</tbody>
       </table>
+      ${pelatihSection}
     </div>`;
 }
 
@@ -588,7 +630,7 @@ export default function ScheduleWeeklyPage() {
   // ── Export PNG (format tabel seperti contoh) ───────────────
   async function exportPNG(ev) {
     const asgn = ev.assignments || [];
-    const html = buildExportHTML(ev, asgn);
+    const html = buildExportHTML(ev, asgn, picOptions);
 
     // Render ke div tersembunyi lalu capture
     const container = document.createElement('div');
