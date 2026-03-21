@@ -220,8 +220,10 @@ export default function ScheduleWeeklyPage() {
   const [monitorData, setMonitorData]= useState([]);   // priority monitor data
   const [monitorLoad, setMonitorLoad]= useState(false);
   // Quick PIC state: { [eventId]: { slot: { a, b, hpA, hpB } } }
-  const [picBatch,   setPicBatch]   = useState({});
-  const [savingPIC,  setSavingPIC]  = useState(false);
+  const [picBatch,        setPicBatch]        = useState({});
+  const [savingPIC,       setSavingPIC]       = useState(false);
+  const [pelatihBatch,    setPelatihBatch]    = useState({});
+  const [savingPelatih,   setSavingPelatih]   = useState(false);
   const [showAddMisa, setShowAddMisa] = useState(false);
   const INIT_MISA_FORM = {
     tipe:            'Misa_Khusus',  // 'Misa_Khusus' | 'Mingguan_HariRaya'
