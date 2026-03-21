@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Settings, Save, RefreshCw, Shield, Users, Database, Bell, KeyRound, MessageCircle, Send, Flame } from 'lucide-react';
+import { Settings, Save, RefreshCw, Shield, Users, Database, Bell, KeyRound, MessageCircle, Send, Flame, FileSpreadsheet } from 'lucide-react';
 import { broadcastNotification, sendNotification } from '../hooks/useNotifications';
 import toast from 'react-hot-toast';
+import * as XLSX from 'xlsx';
 
 const CONFIG_GROUPS = {
   'Opt-in Misa Harian': ['window_optin_harian_start','window_optin_harian_end'],
@@ -481,10 +482,41 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     setMassLoad(false);
     const ok = results.filter(r=>r.ok).length;
     toast.success(`${ok}/${results.length} password berhasil direset! (Admin dilewati)`);
-    // Auto-download CSV
-    downloadMassResetCSV(results);
+    // Auto-download Excel
+    downloadMassResetExcel(results);
   }
 
+  function downloadMassResetExcel(results) {
+    const rows = results.map(r => ({
+      'Username':     r.user.nickname,
+      'Nama':         r.user.nama_panggilan,
+      'Lingkungan':   r.user.lingkungan || '',
+      'Password Baru': r.ok ? r.password : '— GAGAL —',
+      'Status':       r.ok ? 'Berhasil' : `Gagal: ${r.error}`,
+      'HP Ortu':      r.user.hp_ortu || '',
+      'HP Anak':      r.user.hp_anak || '',
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    // Style header baris pertama
+    ws['!cols'] = [14, 22, 20, 14, 18, 16, 16].map(w => ({ wch: w }));
+
+    // Bold header cells
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const addr = XLSX.utils.encode_cell({ r: 0, c: C });
+      if (!ws[addr]) continue;
+      ws[addr].s = { font: { bold: true }, fill: { fgColor: { rgb: '8B0000' } }, fontColor: { rgb: 'FFFFFF' } };
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Reset Password');
+    const today = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(wb, `reset-password-${today}.xlsx`);
+    toast.success('Excel berhasil diunduh!');
+  }
+
+  // Tetap sediakan CSV sebagai fallback
   function downloadMassResetCSV(results) {
     const rows = results.map(r => [
       r.user.nickname, r.user.nama_panggilan, r.user.lingkungan,
@@ -574,9 +606,13 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
                   <span className="text-xs text-gray-500">
                     ✅ {massResults.filter(r=>r.ok).length} berhasil · ❌ {massResults.filter(r=>!r.ok).length} gagal
                   </span>
+                  <button onClick={() => downloadMassResetExcel(massResults)}
+                    className="btn-primary btn-sm gap-1 text-xs transition-all hover:scale-105">
+                    <FileSpreadsheet size={13}/> Excel
+                  </button>
                   <button onClick={() => downloadMassResetCSV(massResults)}
                     className="btn-outline btn-sm gap-1 text-xs transition-all hover:scale-105">
-                    📥 Unduh CSV
+                    📥 CSV
                   </button>
                 </div>
               )}
