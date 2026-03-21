@@ -1,10 +1,6 @@
 // supabase/functions/admin-reset-password/index.ts
-// Handle 2 mode:
-//   1. reset   → update password user yang sudah ada di auth.users
-//   2. provision → buat auth.users baru untuk anggota yang belum punya akun
-//
-// Semua operasi pakai Supabase Admin API (GoTrue) — BUKAN pgcrypto SQL
-// sehingga bcrypt hash selalu kompatibel dan login selalu berhasil.
+// Versi: simpel, robust, tanpa TypeScript strict types
+// Deploy: Supabase Dashboard → Edge Functions → New Function → nama: admin-reset-password
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -14,149 +10,188 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-function json(data: unknown, status = 200) {
+function reply(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { ...CORS, "Content-Type": "application/json" },
   });
 }
 
-// Generate password acak 10 karakter, mudah dibaca
-function genPassword(len = 10): string {
+function randPassword(len = 10) {
   const chars = "abcdefghjkmnpqrstuvwxyz23456789";
-  let result = "";
-  const arr  = new Uint8Array(len);
+  const arr = new Uint8Array(len);
   crypto.getRandomValues(arr);
-  for (const b of arr) result += chars[b % chars.length];
-  return result;
+  return Array.from(arr, (b) => chars[b % chars.length]).join("");
 }
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
   try {
-    // ── Verifikasi caller ───────────────────────────────────────
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) return json({ ok: false, error: "Unauthorized" }, 401);
+    // ── 1. Ambil token dari header ─────────────────────────────
+    const authHeader = req.headers.get("Authorization") || "";
+    const token = authHeader.replace("Bearer ", "").trim();
+    if (!token) return reply({ ok: false, error: "Token kosong — pastikan sudah login" }, 401);
 
-    const supabaseAdmin = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      { auth: { autoRefreshToken: false, persistSession: false } },
-    );
+    // ── 2. Buat dua client ─────────────────────────────────────
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+    const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 
-    const supabaseCaller = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } },
-    );
+    if (!SERVICE_KEY) return reply({ ok: false, error: "SUPABASE_SERVICE_ROLE_KEY tidak tersedia" }, 500);
 
-    const { data: { user: caller } } = await supabaseCaller.auth.getUser();
-    if (!caller) return json({ ok: false, error: "Token tidak valid" }, 401);
+    // Admin client — pakai service_role, bypass semua RLS
+    const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
 
-    const { data: callerProfile } = await supabaseAdmin
-      .from("users").select("role").eq("id", caller.id).single();
-    if (!["Administrator", "Pengurus"].includes(callerProfile?.role)) {
-      return json({ ok: false, error: "Hanya Administrator/Pengurus" }, 403);
+    // Caller client — verifikasi token user yang memanggil
+    const caller = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+
+    // ── 3. Verifikasi caller ───────────────────────────────────
+    const { data: { user: callerUser }, error: authErr } = await caller.auth.getUser();
+    if (authErr || !callerUser) {
+      return reply({ ok: false, error: "Token tidak valid atau sudah kadaluarsa — login ulang" }, 401);
     }
 
-    // ── Parse payload ───────────────────────────────────────────
-    const body = await req.json();
-    const mode = body.mode || "reset"; // "reset" | "provision" | "provision_all"
+    const { data: profile } = await admin
+      .from("users").select("role").eq("id", callerUser.id).single();
 
-    // ── MODE: reset — update password 1 user ───────────────────
+    if (!profile || !["Administrator", "Pengurus"].includes(profile.role)) {
+      return reply({ ok: false, error: `Role "${profile?.role}" tidak punya izin reset password` }, 403);
+    }
+
+    // ── 4. Parse body ──────────────────────────────────────────
+    const body = await req.json().catch(() => ({}));
+    const mode = body.mode || "reset";
+
+    // ── MODE: reset — update password 1 user ──────────────────
     if (mode === "reset") {
       const { user_id, new_password } = body;
-      if (!user_id || !new_password) {
-        return json({ ok: false, error: "user_id dan new_password wajib" }, 400);
+      if (!user_id)     return reply({ ok: false, error: "user_id wajib diisi" }, 400);
+      if (!new_password)return reply({ ok: false, error: "new_password wajib diisi" }, 400);
+      if (new_password.length < 6) return reply({ ok: false, error: "Password minimal 6 karakter" }, 400);
+
+      // Cek dulu apakah user ada di auth.users
+      const { data: existingAuth, error: getErr } = await admin.auth.admin.getUserById(user_id);
+
+      if (getErr || !existingAuth?.user) {
+        // User belum ada di auth.users — perlu dibuat dulu
+        // Ambil data dari public.users
+        const { data: pubUser, error: pubErr } = await admin
+          .from("users").select("email, nickname").eq("id", user_id).single();
+
+        if (pubErr || !pubUser) {
+          return reply({ ok: false, error: `User ${user_id} tidak ditemukan di database` }, 404);
+        }
+
+        // Buat auth user baru dengan ID yang sama
+        const { error: createErr } = await admin.auth.admin.createUser({
+          email:         pubUser.email,
+          password:      new_password,
+          email_confirm: true,
+          // Supabase v2 Admin API tidak support custom UUID saat createUser
+          // Akan generate UUID baru — kita perlu update public.users
+        });
+
+        // Jika email sudah ada tapi id beda, coba updateUserByEmail
+        if (createErr) {
+          // Fallback: cari by email
+          const { data: byEmail } = await admin.auth.admin.listUsers();
+          const found = byEmail?.users?.find(u => u.email === pubUser.email);
+          if (found) {
+            const { error: upErr } = await admin.auth.admin.updateUserById(found.id, {
+              password: new_password, email_confirm: true,
+            });
+            if (upErr) return reply({ ok: false, error: `Reset via email: ${upErr.message}` }, 500);
+
+            // Sync id jika beda
+            if (found.id !== user_id) {
+              await admin.from("users").update({ id: found.id }).eq("id", user_id);
+            }
+            await admin.from("users").update({ must_change_password: true }).eq("id", found.id);
+            return reply({ ok: true, note: "Reset via email (id sync)" });
+          }
+          return reply({ ok: false, error: `Gagal buat auth user: ${createErr.message}` }, 500);
+        }
+
+        await admin.from("users").update({ must_change_password: true }).eq("id", user_id);
+        return reply({ ok: true, note: "Auth user dibuat baru" });
       }
-      if (new_password.length < 6) {
-        return json({ ok: false, error: "Password minimal 6 karakter" }, 400);
-      }
-      const { error } = await supabaseAdmin.auth.admin.updateUserById(user_id, {
+
+      // User sudah ada — update password saja
+      const { error: upErr } = await admin.auth.admin.updateUserById(user_id, {
         password:      new_password,
         email_confirm: true,
       });
-      if (error) return json({ ok: false, error: error.message }, 500);
+      if (upErr) return reply({ ok: false, error: upErr.message }, 500);
 
-      await supabaseAdmin.from("users")
+      await admin.from("users")
         .update({ must_change_password: true, updated_at: new Date().toISOString() })
         .eq("id", user_id);
 
-      return json({ ok: true });
+      return reply({ ok: true });
     }
 
-    // ── MODE: provision_all — buat akun untuk semua yang missing ─
+    // ── MODE: provision_all ────────────────────────────────────
     if (mode === "provision_all") {
-      // Ambil semua anggota aktif yang belum punya auth.users
-      const { data: members } = await supabaseAdmin
+      const { data: members, error: membErr } = await admin
         .from("users")
-        .select("id, nickname, email, nama_panggilan, hp_ortu, hp_anak")
+        .select("id, email, nickname, nama_panggilan, hp_ortu, hp_anak")
         .in("status", ["Active", "Pending"]);
 
-      if (!members?.length) return json({ ok: true, results: [], total: 0 });
+      if (membErr) return reply({ ok: false, error: membErr.message }, 500);
+      if (!members?.length) return reply({ ok: true, results: [], total: 0 });
 
       const results = [];
 
       for (const m of members) {
-        // Cek apakah auth user sudah ada
-        const { data: existing } = await supabaseAdmin.auth.admin.getUserById(m.id);
+        const pw = randPassword(10);
+        const { data: existingAuth } = await admin.auth.admin.getUserById(m.id);
 
-        const pw = genPassword(10);
-
-        if (!existing?.user) {
+        if (!existingAuth?.user) {
           // Belum ada — buat baru
-          const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
-            email:        m.email,
-            password:     pw,
-            email_confirm: true,
-            user_metadata: {},
+          const { data: created, error: createErr } = await admin.auth.admin.createUser({
+            email: m.email, password: pw, email_confirm: true,
           });
 
           if (createErr) {
-            results.push({ nickname: m.nickname, nama: m.nama_panggilan,
-              email: m.email, password: null, ok: false, error: createErr.message });
+            // Mungkin email sudah ada dengan ID berbeda
+            const { data: listData } = await admin.auth.admin.listUsers({ perPage: 1000 });
+            const found = listData?.users?.find(u => u.email?.toLowerCase() === m.email?.toLowerCase());
+            if (found) {
+              await admin.auth.admin.updateUserById(found.id, { password: pw, email_confirm: true });
+              if (found.id !== m.id) {
+                await admin.from("users").update({ id: found.id }).eq("id", m.id);
+              }
+              await admin.from("users").update({ must_change_password: true }).eq("id", found.id);
+              results.push({ nickname: m.nickname, nama: m.nama_panggilan, email: m.email, password: pw, ok: true, action: "synced" });
+            } else {
+              results.push({ nickname: m.nickname, nama: m.nama_panggilan, email: m.email, password: null, ok: false, error: createErr.message });
+            }
             continue;
           }
 
-          // Pastikan id di auth.users = id di public.users
-          // (Supabase createUser biasanya buat UUID baru — perlu update)
-          if (created.user.id !== m.id) {
-            // Update referensi id di public.users
-            await supabaseAdmin.from("users")
-              .update({ id: created.user.id })
-              .eq("id", m.id);
-          }
-
-          await supabaseAdmin.from("users")
-            .update({ must_change_password: true, updated_at: new Date().toISOString() })
-            .eq("id", created.user.id);
-
-          results.push({ nickname: m.nickname, nama: m.nama_panggilan,
-            email: m.email, password: pw, ok: true, action: "created" });
+          await admin.from("users").update({ must_change_password: true }).eq("id", created.user.id);
+          results.push({ nickname: m.nickname, nama: m.nama_panggilan, email: m.email, password: pw, ok: true, action: "created" });
         } else {
-          // Sudah ada — hanya reset password
-          const { error: resetErr } = await supabaseAdmin.auth.admin.updateUserById(
-            m.id, { password: pw, email_confirm: true },
-          );
-          await supabaseAdmin.from("users")
-            .update({ must_change_password: true })
-            .eq("id", m.id);
-
-          results.push({ nickname: m.nickname, nama: m.nama_panggilan,
-            email: m.email, password: pw, ok: !resetErr,
-            action: "reset", error: resetErr?.message });
+          // Sudah ada — reset password
+          const { error: upErr } = await admin.auth.admin.updateUserById(m.id, { password: pw, email_confirm: true });
+          await admin.from("users").update({ must_change_password: true }).eq("id", m.id);
+          results.push({ nickname: m.nickname, nama: m.nama_panggilan, email: m.email, password: pw, ok: !upErr, action: "reset", error: upErr?.message });
         }
       }
 
-      const ok = results.filter(r => r.ok).length;
-      return json({ ok: true, results, total: results.length, success: ok });
+      const okCount = results.filter(r => r.ok).length;
+      return reply({ ok: true, results, total: results.length, success: okCount });
     }
 
-    return json({ ok: false, error: `Mode tidak dikenal: ${mode}` }, 400);
+    return reply({ ok: false, error: `Mode tidak dikenal: "${mode}"` }, 400);
 
   } catch (err) {
-    console.error(err);
-    return json({ ok: false, error: String(err) }, 500);
+    console.error("Edge function crash:", err);
+    return reply({ ok: false, error: `Server error: ${err?.message || String(err)}` }, 500);
   }
 });

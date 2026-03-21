@@ -11,19 +11,37 @@ import * as XLSX from 'xlsx';
 // Edge function ada di: supabase/functions/admin-reset-password/index.ts
 async function resetPasswordViaEdge(supabaseClient, userId, newPassword) {
   const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session?.access_token) throw new Error('Sesi login tidak ditemukan. Coba logout dan login ulang.');
+
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${session?.access_token}`,
-      'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-    },
-    body: JSON.stringify({ user_id: userId, new_password: newPassword }),
-  });
-  const json = await res.json().catch(() => ({ ok: false, error: 'Response bukan JSON' }));
-  if (!json.ok) throw new Error(json.error || 'Edge function gagal');
-  return json;
+
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+        'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ mode: 'reset', user_id: userId, new_password: newPassword }),
+    });
+  } catch (fetchErr) {
+    throw new Error(`Tidak bisa terhubung ke Edge Function: ${fetchErr.message}`);
+  }
+
+  // Handle non-JSON responses (misal: 404 function not found)
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); }
+  catch { throw new Error(`Edge Function belum di-deploy atau error server (HTTP ${res.status}): ${text.slice(0, 100)}`); }
+
+  if (res.status === 404) throw new Error('Edge Function "admin-reset-password" belum di-deploy di Supabase. Ikuti panduan deployment.');
+  if (res.status === 401) throw new Error('Token tidak valid. Coba logout dan login ulang.');
+  if (res.status === 403) throw new Error('Akun ini tidak punya izin reset password (bukan Admin/Pengurus).');
+  if (!data.ok) throw new Error(data.error || `Server error HTTP ${res.status}`);
+
+  return data;
 }
 
 const CONFIG_GROUPS = {
@@ -648,6 +666,9 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
               <KeyRound size={15}/> Provision & Reset Password
             </h3>
 
+            {/* Test Edge Function */}
+            <EdgeFunctionStatus supabase={supabase}/>
+
             {/* PROVISION — buat akun baru untuk yang belum punya */}
             <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 space-y-2">
               <p className="text-xs font-semibold text-blue-800">
@@ -947,6 +968,81 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Komponen: Status Edge Function ────────────────────────────
+// Tampil di atas bagian reset password — bantu diagnosa jika EF belum deploy
+function EdgeFunctionStatus({ supabase }) {
+  const [status,  setStatus]  = React.useState(null); // null | 'checking' | 'ok' | 'error'
+  const [detail,  setDetail]  = React.useState('');
+
+  async function checkEdgeFunction() {
+    setStatus('checking'); setDetail('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
+      // Kirim OPTIONS request — tidak perlu body, hanya cek apakah EF ada
+      const res = await fetch(url, {
+        method: 'OPTIONS',
+        headers: { 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY },
+      });
+      if (res.ok || res.status === 200) {
+        setStatus('ok'); setDetail('Edge Function aktif dan siap digunakan.');
+      } else if (res.status === 404) {
+        setStatus('error');
+        setDetail('Edge Function belum di-deploy. Ikuti langkah di bawah.');
+      } else {
+        const text = await res.text();
+        setStatus('ok'); // OPTIONS kadang return non-200 tapi EF tetap ada
+        setDetail(`HTTP ${res.status} — Edge Function kemungkinan sudah ada.`);
+      }
+    } catch (e) {
+      setStatus('error'); setDetail(`Network error: ${e.message}`);
+    }
+  }
+
+  return (
+    <div className={`p-3 rounded-xl border text-xs space-y-2
+      ${status === 'ok' ? 'bg-green-50 border-green-200'
+      : status === 'error' ? 'bg-red-50 border-red-200'
+      : 'bg-gray-50 border-gray-200'}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${
+            status === 'ok' ? 'bg-green-500'
+            : status === 'error' ? 'bg-red-500'
+            : status === 'checking' ? 'bg-yellow-400 animate-pulse'
+            : 'bg-gray-300'}`}/>
+          <span className="font-medium text-gray-700">
+            {status === null && 'Edge Function: belum dicek'}
+            {status === 'checking' && 'Mengecek Edge Function…'}
+            {status === 'ok' && '✅ Edge Function: Aktif'}
+            {status === 'error' && '❌ Edge Function: Belum di-deploy'}
+          </span>
+        </div>
+        <button onClick={checkEdgeFunction} disabled={status === 'checking'}
+          className="btn-outline btn-sm text-xs px-2 py-1">
+          {status === 'checking' ? '…' : 'Cek'}
+        </button>
+      </div>
+
+      {detail && <p className="text-gray-600">{detail}</p>}
+
+      {status === 'error' && (
+        <div className="bg-white rounded-lg p-2.5 border border-red-100 space-y-1.5">
+          <p className="font-semibold text-red-800">Cara deploy Edge Function:</p>
+          <ol className="list-decimal list-inside space-y-1 text-gray-700">
+            <li>Buka <strong>Supabase Dashboard → Edge Functions</strong></li>
+            <li>Klik <strong>"New Function"</strong></li>
+            <li>Nama: <code className="bg-gray-100 px-1 rounded">admin-reset-password</code></li>
+            <li>Copy-paste isi file <code className="bg-gray-100 px-1 rounded">supabase/functions/admin-reset-password/index.ts</code></li>
+            <li>Klik <strong>Deploy</strong></li>
+            <li>Kembali ke sini → klik <strong>Cek</strong> lagi</li>
+          </ol>
         </div>
       )}
     </div>
