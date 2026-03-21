@@ -475,6 +475,49 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     window.open(`https://wa.me/${phone}?text=${buildWAMsg(user, password)}`, '_blank');
   }
 
+  async function provisionAllAccounts() {
+    if (!confirm(
+      'Provision akun untuk semua anggota yang belum punya akun login?\n' +
+      'Password acak akan di-generate. Download Excel setelah selesai.'
+    )) return;
+    setMassLoad(true);
+    setMassRes([]);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ mode: 'provision_all' }),
+      });
+      const json = await res.json();
+      if (!json.ok && !json.results) {
+        toast.error('Gagal: ' + (json.error || 'Unknown error'));
+        setMassLoad(false);
+        return;
+      }
+      // Map ke format yang sama dengan massReset hasil
+      const results = (json.results || []).map(r => ({
+        user: { nickname: r.nickname, nama_panggilan: r.nama, hp_ortu: r.hp || '' },
+        password: r.password || '',
+        ok: r.ok,
+        error: r.error,
+      }));
+      setMassRes(results);
+      const ok = results.filter(r => r.ok).length;
+      toast.success(`${ok}/${results.length} akun berhasil di-provision!`);
+      downloadMassResetExcel(results);
+      loadUsers();
+    } catch (e) {
+      toast.error('Error: ' + e.message);
+    }
+    setMassLoad(false);
+  }
+
   async function massResetAllPasswords() {
     // Exclude Administrator accounts from mass reset
     const targets = users.filter(u => u.status === 'Active' && u.role !== 'Administrator');
@@ -599,36 +642,59 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
       {/* Users tab */}
       {tab === 'users' && (
         <div className="space-y-4">
-          {/* Mass password reset */}
-          <div className="card border-red-100 bg-red-50/30 space-y-3">
+          {/* Provision + Mass Reset */}
+          <div className="card border-red-100 bg-red-50/30 space-y-4">
             <h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm">
-              <KeyRound size={15}/> Reset Password Massal
+              <KeyRound size={15}/> Provision & Reset Password
             </h3>
-            <p className="text-xs text-red-700">
-              Reset password semua anggota sekaligus. Cocok untuk deployment pertama kali.
-              Setiap anggota wajib mengganti password saat login berikutnya.
-            </p>
-            <div className="flex gap-3 flex-wrap items-center">
-              <button onClick={massResetAllPasswords} disabled={massLoading}
-                className="btn-danger gap-2 transition-all hover:scale-105 active:scale-95">
-                <KeyRound size={15}/>
-                {massLoading ? 'Mereset...' : `🔑 Reset Semua (${users.filter(u=>u.status==='Active').length} anggota aktif)`}
+
+            {/* PROVISION — buat akun baru untuk yang belum punya */}
+            <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 space-y-2">
+              <p className="text-xs font-semibold text-blue-800">
+                🆕 Langkah 1 (pertama kali / ada anggota baru): Provision Akun
+              </p>
+              <p className="text-xs text-blue-700">
+                Buat akun login untuk semua anggota yang belum punya. Password otomatis di-generate acak.
+                Anggota lama yang sudah punya akun akan di-reset passwordnya.
+              </p>
+              <button onClick={provisionAllAccounts} disabled={massLoading}
+                className="btn-primary gap-2 bg-blue-600 hover:bg-blue-700 border-blue-600">
+                <Users size={15}/>
+                {massLoading ? 'Memproses...' : '🚀 Provision Semua Akun'}
               </button>
-              {massResults.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500">
-                    ✅ {massResults.filter(r=>r.ok).length} berhasil · ❌ {massResults.filter(r=>!r.ok).length} gagal
+            </div>
+
+            {/* RESET — hanya reset password, akun sudah ada */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-red-800">
+                🔑 Langkah 2 (opsional): Reset Password Saja
+              </p>
+              <p className="text-xs text-red-700">
+                Hanya reset password semua akun yang sudah ada. Tidak membuat akun baru.
+              </p>
+              <button onClick={massResetAllPasswords} disabled={massLoading}
+                className="btn-danger gap-2">
+                <KeyRound size={15}/>
+                {massLoading ? 'Mereset...' : `Reset Password (${users.filter(u=>u.status==='Active').length} anggota)`}
+              </button>
+            </div>
+
+            {massResults.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-gray-600 font-medium">
+                    ✅ {massResults.filter(r=>r.ok).length} berhasil
+                    {massResults.filter(r=>!r.ok).length > 0 && ` · ❌ ${massResults.filter(r=>!r.ok).length} gagal`}
                   </span>
                   <button onClick={() => downloadMassResetExcel(massResults)}
-                    className="btn-primary btn-sm gap-1 text-xs transition-all hover:scale-105">
+                    className="btn-primary btn-sm gap-1 text-xs">
                     <FileSpreadsheet size={13}/> Excel
                   </button>
                   <button onClick={() => downloadMassResetCSV(massResults)}
-                    className="btn-outline btn-sm gap-1 text-xs transition-all hover:scale-105">
+                    className="btn-outline btn-sm gap-1 text-xs">
                     📥 CSV
                   </button>
                 </div>
-              )}
             </div>
             {massResults.length > 0 && (
               <div className="overflow-x-auto max-h-64 border border-red-100 rounded-xl">

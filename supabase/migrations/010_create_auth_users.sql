@@ -1,115 +1,118 @@
 -- ================================================================
 -- SIGMA Migration 010: Buat auth.users untuk semua anggota
--- 
--- MASALAH: 131 anggota ada di public.users tapi TIDAK ADA di
--- auth.users → tidak ada yang bisa login sama sekali
+-- + Password auto-generate acak
 --
--- FIX: INSERT ke auth.users untuk semua anggota yang missing
--- Password default: sigma + 6 digit pertama MyID
--- Contoh: MyID = "A1B2C3D4E5" → password = "sigmaA1B2C3"
+-- MASALAH: 131 anggota ada di public.users tapi TIDAK ADA
+-- di auth.users → tidak ada yang bisa login
 --
--- Jalankan SELURUH script ini di Supabase SQL Editor
+-- FIX: INSERT ke auth.users, password acak per anggota
+-- Anggota lama: data nickname/MyID TIDAK diubah
 -- ================================================================
 
--- ── STEP 1: Buat auth.users untuk semua anggota yang missing ───
-
-INSERT INTO auth.users (
-  id,
-  instance_id,
-  email,
-  encrypted_password,
-  email_confirmed_at,
-  created_at,
-  updated_at,
-  aud,
-  role,
-  raw_app_meta_data,
-  raw_user_meta_data,
-  is_super_admin,
-  confirmation_token,
-  email_change_token_new,
-  recovery_token
-)
-SELECT
-  pu.id,
-  '00000000-0000-0000-0000-000000000000'::uuid,
-  pu.email,
-  -- Password default: "sigma" + 6 karakter pertama MyID
-  -- Contoh MyID "A1B2C3D4E5" → password "sigmaA1B2C3"
-  crypt('sigma' || LEFT(pu.myid, 6), gen_salt('bf', 10)),
-  NOW(),    -- email_confirmed_at: langsung confirmed
-  NOW(),
-  NOW(),
-  'authenticated',
-  'authenticated',
-  '{"provider":"email","providers":["email"]}'::jsonb,
-  '{}'::jsonb,
-  false,
-  '',
-  '',
-  ''
-FROM public.users pu
-WHERE NOT EXISTS (
-  SELECT 1 FROM auth.users au WHERE au.id = pu.id
-)
-AND pu.status IN ('Active', 'Pending');
-
--- Lihat hasilnya
-SELECT 'Akun dibuat: ' || COUNT(*) AS hasil
-FROM auth.users au
-JOIN public.users pu ON pu.id = au.id
-WHERE pu.status IN ('Active', 'Pending');
+-- ── STEP 1: Helper function generate password acak ─────────────
+-- Karakter: huruf kecil + angka, skip 0/O/l/I agar mudah dibaca
+CREATE OR REPLACE FUNCTION _sigma_gen_password(len INT DEFAULT 10)
+RETURNS TEXT AS $$
+DECLARE
+  chars TEXT := 'abcdefghjkmnpqrstuvwxyz23456789';
+  result TEXT := '';
+  i INT;
+BEGIN
+  FOR i IN 1..len LOOP
+    result := result || substr(chars, floor(random() * length(chars) + 1)::int, 1);
+  END LOOP;
+  RETURN result;
+END;
+$$ LANGUAGE plpgsql;
 
 
--- ── STEP 2: Verifikasi semua sudah ada ─────────────────────────
-
-SELECT
-  COUNT(*) FILTER (WHERE au.id IS NULL)       AS masih_missing,
-  COUNT(*) FILTER (WHERE au.id IS NOT NULL)   AS sudah_ada,
-  COUNT(*)                                     AS total_anggota
-FROM public.users pu
-LEFT JOIN auth.users au ON au.id = pu.id
-WHERE pu.status IN ('Active', 'Pending');
-
--- Kalau masih_missing = 0 → semua sudah dibuat ✅
+-- ── STEP 2: Buat tabel sementara untuk simpan password ─────────
+-- (Supaya bisa ditampilkan setelah INSERT)
+CREATE TEMP TABLE _pw_results (
+  nickname      TEXT,
+  nama_panggilan TEXT,
+  email         TEXT,
+  password_baru TEXT,
+  hp_ortu       TEXT
+);
 
 
--- ── STEP 3: Tampilkan daftar password default per anggota ──────
--- Screenshot ini untuk arsip / kirim ke anggota
+-- ── STEP 3: INSERT ke auth.users + catat password ──────────────
+DO $$
+DECLARE
+  r       RECORD;
+  pw      TEXT;
+  inst_id UUID := '00000000-0000-0000-0000-000000000000';
+BEGIN
+  FOR r IN
+    SELECT pu.id, pu.email, pu.nickname, pu.nama_panggilan, pu.hp_ortu, pu.hp_anak
+    FROM public.users pu
+    WHERE NOT EXISTS (SELECT 1 FROM auth.users au WHERE au.id = pu.id)
+      AND pu.status IN ('Active', 'Pending')
+    ORDER BY pu.nama_panggilan
+  LOOP
+    pw := _sigma_gen_password(10);
 
-SELECT
-  pu.nickname,
-  pu.nama_panggilan,
-  pu.email,
-  'sigma' || LEFT(pu.myid, 6) AS password_default,
-  pu.myid
-FROM public.users pu
-WHERE pu.status = 'Active'
-ORDER BY pu.nama_panggilan;
+    INSERT INTO auth.users (
+      id, instance_id, email,
+      encrypted_password,
+      email_confirmed_at, created_at, updated_at,
+      aud, role,
+      raw_app_meta_data, raw_user_meta_data,
+      is_super_admin,
+      confirmation_token, email_change_token_new, recovery_token
+    ) VALUES (
+      r.id, inst_id, r.email,
+      crypt(pw, gen_salt('bf', 10)),
+      NOW(), NOW(), NOW(),
+      'authenticated', 'authenticated',
+      '{"provider":"email","providers":["email"]}'::jsonb,
+      '{}'::jsonb,
+      false, '', '', ''
+    )
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO _pw_results VALUES (
+      r.nickname, r.nama_panggilan, r.email, pw,
+      COALESCE(r.hp_ortu, r.hp_anak, '')
+    );
+  END LOOP;
+END;
+$$;
 
 
--- ── STEP 4: Tandai semua anggota wajib ganti password ──────────
-
+-- ── STEP 4: Tandai semua wajib ganti password ──────────────────
 UPDATE public.users
-SET must_change_password = TRUE,
-    updated_at = NOW()
+SET must_change_password = TRUE, updated_at = NOW()
 WHERE status = 'Active';
 
-SELECT 'must_change_password=true: ' || COUNT(*) || ' anggota' AS hasil
-FROM public.users WHERE must_change_password = TRUE;
 
-
--- ── STEP 5: Test 1 akun manual ─────────────────────────────────
--- Cek apakah hash password akun 'satrio' sudah benar
+-- ── STEP 5: Tampilkan daftar username + password baru ──────────
+-- SCREENSHOT INI — kirimkan ke masing-masing anggota via WA
 
 SELECT
-  pu.nickname,
-  pu.email,
-  LEFT(pu.myid, 6)                        AS myid_prefix,
-  'sigma' || LEFT(pu.myid, 6)             AS password_default,
-  au.email_confirmed_at IS NOT NULL       AS confirmed,
-  au.encrypted_password IS NOT NULL       AS has_password,
-  LEFT(au.encrypted_password, 7)          AS hash_prefix
+  nickname        AS username,
+  nama_panggilan  AS nama,
+  email,
+  password_baru   AS password,
+  hp_ortu         AS hp
+FROM _pw_results
+ORDER BY nama_panggilan;
+
+
+-- ── STEP 6: Verifikasi akhir ────────────────────────────────────
+SELECT
+  'Berhasil dibuat'  AS status,
+  COUNT(*)           AS jumlah
+FROM _pw_results
+UNION ALL
+SELECT
+  'Masih missing',
+  COUNT(*)
 FROM public.users pu
-JOIN auth.users au ON au.id = pu.id
-WHERE pu.nickname = 'satrio';
+LEFT JOIN auth.users au ON au.id = pu.id
+WHERE pu.status = 'Active' AND au.id IS NULL;
+
+
+-- ── CLEANUP ─────────────────────────────────────────────────────
+DROP FUNCTION IF EXISTS _sigma_gen_password(INT);

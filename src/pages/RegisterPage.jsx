@@ -48,15 +48,35 @@ export default function RegisterPage() {
   });
   const [errors, setErrors] = useState({});
 
-  // Auto-generate nickname dari nama
+  // Auto-generate nickname saat nama lengkap diubah
   function handleNamaChange(val) {
-    setForm(f => ({ ...f, nama_lengkap: val }));
-    if (!form.nickname) {
-      const suggested = generateNickname(val);
-      if (suggested) {
-        setForm(f => ({ ...f, nickname: suggested }));
-        checkNickname(suggested);
+    setForm(f => {
+      const newForm = { ...f, nama_lengkap: val };
+      if (!f._nickname_manual) {
+        // Pakai kata pertama sebagai base panggilan sementara
+        const base = val.split(' ').filter(Boolean)[0] || '';
+        const suggested = generateNickname(base, val);
+        if (suggested) {
+          newForm.nickname = suggested;
+          checkNickname(suggested);
+        }
       }
+      return newForm;
+    });
+  }
+
+  function handleNicknameChange(val) {
+    const clean = toNickname(val);
+    setForm(f => ({ ...f, nickname: clean, _nickname_manual: true }));
+    checkNickname(clean);
+  }
+
+  function handleGenerateNickname() {
+    const base = form.nickname?.split('_')[0] || form.nama_lengkap.split(' ').filter(Boolean)[0] || '';
+    const suggested = generateNickname(base, form.nama_lengkap);
+    if (suggested) {
+      setForm(f => ({ ...f, nickname: suggested, _nickname_manual: false }));
+      checkNickname(suggested);
     }
   }
 
@@ -216,8 +236,8 @@ export default function RegisterPage() {
                 <input
                   className={`input ${errors.nickname ? 'input-error' : ''}`}
                   value={form.nickname}
-                  onChange={e => { setForm(f => ({...f, nickname: toNickname(e.target.value)})); checkNickname(toNickname(e.target.value)); }}
-                  placeholder="satrio"
+                  onChange={e => handleNicknameChange(e.target.value)}
+                  placeholder="satrio_eu"
                 />
                 {nicknameStatus === 'checking' && (
                   <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-gray-300 border-t-brand-800 rounded-full animate-spin" />
@@ -225,11 +245,7 @@ export default function RegisterPage() {
                 {nicknameStatus === 'ok' && <CheckCircle size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-green-500" />}
                 {nicknameStatus === 'taken' && <AlertCircle size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500" />}
               </div>
-              <button type="button"
-                onClick={() => {
-                  const s = generateNickname(form.nama_lengkap);
-                  if (s) { setForm(f => ({...f, nickname: s})); checkNickname(s); }
-                }}
+              <button type="button" onClick={handleGenerateNickname}
                 className="btn-outline btn-sm px-3 text-xs whitespace-nowrap">
                 ✨ Generate
               </button>

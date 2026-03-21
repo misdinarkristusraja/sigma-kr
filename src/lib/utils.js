@@ -124,40 +124,61 @@ export function toNickname(str) {
 }
 
 /**
- * Generate nickname dari nama lengkap — pakai nama baptis (kata pertama) saja
- * Contoh: "Stefanus Gerrard Van Creidoagape" → "gerrard"
- *         "Maria Ratu Rosari Suci"            → "ratu"  (skip "Maria")
- *         "Andreas Antonio Tius Halawa"       → "andreas"
+ * Generate nickname dari nama_panggilan + inisial kata setelahnya di nama_lengkap
  *
- * Logika:
- *   1. Split nama jadi kata-kata
- *   2. Skip kata pertama jika itu nama santo/santa umum (Maria, Yohanes, dst)
- *   3. Pakai kata pertama yang tersisa, lowercase, strip non-alpha
+ * Contoh:
+ *   nama_panggilan="satrio", nama_lengkap="Bernardus Satrio Eko Utomo"
+ *   → kata setelah "satrio": ["Eko","Utomo"] → inisial "eu"
+ *   → nickname: "satrio_eu"
+ *
+ *   nama_panggilan="gerrard", nama_lengkap="Stefanus Gerrard Van Creidoagape"
+ *   → kata setelah "gerrard": ["Van","Creidoagape"] → inisial "vc"
+ *   → nickname: "gerrard_vc"
+ *
+ *   Jika tidak ada kata setelahnya, pakai kata sebelum nama_panggilan.
+ *   Jika nama_panggilan tidak ditemukan di nama_lengkap, pakai semua kata lain.
+ *   Jika nama tunggal, kembalikan nama_panggilan saja.
  */
-const SKIP_NAMES = new Set([
-  'maria','yohanes','johanes','fransiskus','benediktus','benedictus',
-  'antonius','antonius','stefanus','stephanus','christianus','kristianus',
-  'thomas','yusuf','mikael','michael','gabriel','raphaël','raphael',
-  'theresia','theresia','margaretha','margareta','catharina','katarina',
-  'augustinus','dominikus','ignatius','aloysius','robertus','sebastianus',
-  'veronika','veronica','monika','monica','cecilia','sesilia','rosaria',
-  'immaculata','immaculata','agatha','agata','clara','klara',
-  'petrus','paulus','yakobus','bartholomeus','simon','taddeus',
-  'venantius','bonaventura','hieronymus','ambrosius','gregorius',
-]);
+export function generateNickname(namaPanggilan, namaLengkap) {
+  const panggil = (namaPanggilan || '').trim().toLowerCase();
+  const lengkap = (namaLengkap  || '').trim().toLowerCase();
 
-export function generateNickname(namaLengkap) {
-  if (!namaLengkap?.trim()) return '';
-  const kata = namaLengkap.trim().toLowerCase()
-    .replace(/[^a-z\s]/g, '')  // strip non-alpha
+  if (!panggil) return '';
+
+  // Bersihkan karakter non-alpha dari nama_panggilan untuk nickname
+  const base = panggil.replace(/[^a-z0-9]/g, '');
+  if (!base) return '';
+
+  if (!lengkap) return base;
+
+  // Split nama lengkap jadi kata-kata bersih
+  const words = lengkap
+    .replace(/[^a-z\s]/g, '')
     .split(/\s+/)
-    .filter(k => k.length > 0);
+    .filter(w => w.length > 0);
 
-  if (kata.length === 0) return '';
+  // Cari posisi nama_panggilan di nama_lengkap
+  const idx = words.findIndex(w => w === base || w.startsWith(base));
 
-  // Cari kata pertama yang bukan nama santo/santa umum
-  const picked = kata.find(k => !SKIP_NAMES.has(k)) || kata[0];
-  return picked.slice(0, 20); // max 20 char
+  let otherWords;
+  if (idx === -1) {
+    // Tidak ketemu — pakai semua kata selain yang sama persis
+    otherWords = words.filter(w => w !== base);
+  } else if (idx < words.length - 1) {
+    // Ada kata setelah nama_panggilan → pakai itu
+    otherWords = words.slice(idx + 1);
+  } else {
+    // Nama_panggilan di akhir → pakai kata sebelumnya
+    otherWords = words.slice(0, idx);
+  }
+
+  // Ambil huruf pertama tiap kata lain (maks 4 huruf)
+  const suffix = otherWords
+    .map(w => w[0])
+    .join('')
+    .slice(0, 4);
+
+  return suffix ? `${base}_${suffix}` : base;
 }
 
 
