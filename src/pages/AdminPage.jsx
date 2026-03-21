@@ -695,27 +695,26 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
                     📥 CSV
                   </button>
                 </div>
-            </div>
-            {massResults.length > 0 && (
-              <div className="overflow-x-auto max-h-64 border border-red-100 rounded-xl">
-                <table className="tbl text-xs">
-                  <thead><tr><th>Nama</th><th>Username</th><th>Password Baru</th><th>HP Ortu</th><th>WA</th></tr></thead>
-                  <tbody>
-                    {massResults.map((r,i) => (
-                      <tr key={i} className={r.ok ? '' : 'bg-red-50'}>
-                        <td className="font-medium">{r.user.nama_panggilan}</td>
-                        <td className="font-mono text-gray-600">{r.user.nickname}</td>
-                        <td>{r.ok ? <code className="bg-gray-100 px-2 py-0.5 rounded font-bold text-brand-800">{r.password}</code> : <span className="text-red-500">❌ {r.error}</span>}</td>
-                        <td className="text-gray-500 text-xs">{r.user.hp_ortu || r.user.hp_anak || '—'}</td>
-                        <td>{r.ok && (r.user.hp_ortu||r.user.hp_anak) && (
-                          <button onClick={() => openWA(r.user, r.password)} className="btn-primary btn-sm gap-1 text-xs transition-all hover:scale-105 active:scale-95">
-                            <MessageCircle size={12}/> WA
-                          </button>
-                        )}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="overflow-x-auto max-h-64 border border-red-100 rounded-xl">
+                  <table className="tbl text-xs">
+                    <thead><tr><th>Nama</th><th>Username</th><th>Password Baru</th><th>HP Ortu</th><th>WA</th></tr></thead>
+                    <tbody>
+                      {massResults.map((r,i) => (
+                        <tr key={i} className={r.ok ? '' : 'bg-red-50'}>
+                          <td className="font-medium">{r.user.nama_panggilan}</td>
+                          <td className="font-mono text-gray-600">{r.user.nickname}</td>
+                          <td>{r.ok ? <code className="bg-gray-100 px-2 py-0.5 rounded font-bold text-brand-800">{r.password}</code> : <span className="text-red-500">❌ {r.error}</span>}</td>
+                          <td className="text-gray-500 text-xs">{r.user.hp_ortu || r.user.hp_anak || '—'}</td>
+                          <td>{r.ok && (r.user.hp_ortu||r.user.hp_anak) && (
+                            <button onClick={() => openWA(r.user, r.password)} className="btn-primary btn-sm gap-1 text-xs">
+                              <MessageCircle size={12}/> WA
+                            </button>
+                          )}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>
