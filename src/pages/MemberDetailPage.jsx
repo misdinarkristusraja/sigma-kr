@@ -125,13 +125,20 @@ export default function MemberDetailPage() {
     if (!confirm(`Reset password ${member.nama_panggilan} ke password baru?`)) return;
     setResetting(true);
     try {
-      // Gunakan RPC admin_reset_password (SECURITY DEFINER — bypass anon key restriction)
-      const { data, error } = await supabase.rpc('admin_reset_password', {
-        p_user_id:      id,
-        p_new_password: newPw,
+      // Gunakan Edge Function admin-reset-password (Supabase Admin API)
+      const { data: { session } } = await supabase.auth.getSession();
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ user_id: id, new_password: newPw }),
       });
-      if (error) throw error;
-      if (data?.ok === false) throw new Error(data.error);
+      const result = await res.json();
+      if (!result.ok) throw new Error(result.error || 'Reset gagal');
 
       setLastPwForWA(newPw);
       toast.success(`Password ${member.nama_panggilan} berhasil direset!`);

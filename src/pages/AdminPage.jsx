@@ -6,6 +6,26 @@ import { broadcastNotification, sendNotification } from '../hooks/useNotificatio
 import toast from 'react-hot-toast';
 import * as XLSX from 'xlsx';
 
+// ── Helper: reset password via Edge Function ─────────────────────────
+// pgcrypto dan GoTrue bcrypt tidak kompatibel → harus pakai Supabase Admin API
+// Edge function ada di: supabase/functions/admin-reset-password/index.ts
+async function resetPasswordViaEdge(supabaseClient, userId, newPassword) {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session?.access_token}`,
+      'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+    },
+    body: JSON.stringify({ user_id: userId, new_password: newPassword }),
+  });
+  const json = await res.json().catch(() => ({ ok: false, error: 'Response bukan JSON' }));
+  if (!json.ok) throw new Error(json.error || 'Edge function gagal');
+  return json;
+}
+
 const CONFIG_GROUPS = {
   'Opt-in Misa Harian': ['window_optin_harian_start','window_optin_harian_end'],
   'Penjadwalan':        ['prioritas_sma_smk_interval','max_hari_tanpa_jadwal'],
@@ -348,12 +368,11 @@ export default function AdminPage() {
   async function resetPassword(user) {
     if (!confirm(`Reset password ${user.nickname}?`)) return;
     const tempPass = `sigma${user.myid?.slice(0,6) || 'reset'}`;
-    const { data, error } = await supabase.rpc('admin_reset_password', {
-      p_user_id: user.id, p_new_password: tempPass,
-    });
-    if (error || data?.ok === false) { toast.error('Gagal reset: ' + (error?.message || data?.error)); return; }
-    await supabase.from('audit_logs').insert({ actor_id: profile?.id, action: 'RESET_PASSWORD', target_id: user.id });
-    toast.success(`Password direset ke: ${tempPass}`);
+    try {
+      await resetPasswordViaEdge(supabase, user.id, tempPass);
+      await supabase.from('audit_logs').insert({ actor_id: profile?.id, action: 'RESET_PASSWORD', target_id: user.id });
+      toast.success(`Password direset ke: ${tempPass}`);
+    } catch (e) { toast.error('Gagal reset: ' + e.message); }
   }
 
   async function manualBackup() {
@@ -438,11 +457,7 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     for (const u of targets) {
       const pw = genPassword(8);
       try {
-        const { data, error } = await supabase.rpc('admin_reset_password', {
-          p_user_id: u.id, p_new_password: pw,
-        });
-        if (error) throw error;
-        if (data?.ok === false) throw new Error(data.error);
+        await resetPasswordViaEdge(supabase, u.id, pw);
         results.push({ user: u, password: pw, error: null });
       } catch (e) {
         results.push({ user: u, password: pw, error: e.message });
@@ -470,9 +485,7 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     for (const u of targets) {
       const pw = genPassword(8);
       try {
-        const { data, error } = await supabase.rpc('admin_reset_password', { p_user_id: u.id, p_new_password: pw });
-        if (error) throw error;
-        if (data?.ok === false) throw new Error(data.error);
+        await resetPasswordViaEdge(supabase, u.id, pw);
         results.push({ user: u, password: pw, ok: true });
       } catch (e) {
         results.push({ user: u, password: pw, ok: false, error: e.message });
@@ -790,12 +803,12 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
               members={pwUsers}
               genPassword={genPassword}
               onReset={async (userId, pw) => {
-                const { data, error } = await supabase.rpc('admin_reset_password', {
-                  p_user_id: userId, p_new_password: pw,
-                });
-                if (error) return { ok: false, error: error.message };
-                if (data?.ok === false) return { ok: false, error: data.error };
-                return { ok: true };
+                try {
+                  await resetPasswordViaEdge(supabase, userId, pw);
+                  return { ok: true };
+                } catch (e) {
+                  return { ok: false, error: e.message };
+                }
               }}
             />
           </div>
