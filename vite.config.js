@@ -10,9 +10,9 @@ export default defineConfig({
   },
   plugins: [
     react(),
-    // PWA dinonaktifkan — service worker menyebabkan blank screen setelah deploy
-    // karena SW serve JS chunk lama yang tidak ada di server baru.
-    // Aktifkan kembali jika sudah ada strategi cache invalidation yang proper.
+    // PWA: gunakan manual sw.js di public/ (bukan auto-generate)
+    // sehingga kita punya full kontrol atas caching strategy
+    // manifest.json sudah ada di public/ — Vite akan include otomatis
   ],
   build: {
     rollupOptions: {

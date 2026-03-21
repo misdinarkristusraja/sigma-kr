@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDate, buildWALink, PENDIDIKAN_OPTIONS, formatHP, STATUS_LABELS, ROLE_LABELS } from '../lib/utils';
+import { StreakMiniCard } from '../components/ui/StreakWidget';
 import {
   ArrowLeft, CreditCard, BarChart2, Phone, Edit2, Save, X,
   ShieldAlert, ShieldCheck, KeyRound, MessageCircle,
@@ -224,8 +225,9 @@ export default function MemberDetailPage() {
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
         {[
-          { key: 'data', label: '👤 Data Diri' },
-          { key: 'akun', label: '🔑 Akun & WA' },
+          { key: 'data',   label: '👤 Data Diri' },
+          { key: 'streak', label: '🔥 Streak' },
+          { key: 'akun',   label: '🔑 Akun & WA' },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${tab===t.key?'bg-white text-brand-800 shadow-sm':'text-gray-500'}`}>
@@ -273,6 +275,11 @@ export default function MemberDetailPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* ─── TAB STREAK ─── */}
+      {tab === 'streak' && (
+        <StreakMiniCard userId={member?.id}/>
       )}
 
       {/* ─── TAB AKUN & WA ─── */}

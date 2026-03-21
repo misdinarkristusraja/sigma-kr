@@ -5,9 +5,11 @@ import { supabase } from '../lib/supabase';
 import { formatDate, getLiturgyClass, buildWALink } from '../lib/utils';
 import {
   Calendar, Clock, Trophy, ArrowLeftRight, QrCode,
-  CheckCircle, AlertTriangle, ChevronRight, Star, Zap, Bell, CalendarPlus,
+  CheckCircle, AlertTriangle, ChevronRight, Star, Zap, Bell,
+  CalendarPlus, Download, Smartphone,
 } from 'lucide-react';
 import { exportToGCal } from '../lib/calendarExport';
+import StreakWidget from '../components/ui/StreakWidget';
 
 export default function DashboardPage() {
   const { profile, isPengurus, isPelatih } = useAuth();
@@ -345,6 +347,9 @@ export default function DashboardPage() {
 
         {/* Right column */}
         <div className="space-y-4">
+          {/* Streak Widget — Duolingo style */}
+          <StreakWidget/>
+
           {/* Quick actions */}
           <div className="card">
             <h2 className="font-bold text-gray-900 mb-3 text-xs uppercase tracking-wide text-gray-500">Aksi Cepat</h2>
@@ -373,6 +378,7 @@ export default function DashboardPage() {
                 <span className="text-sm font-medium text-gray-700">Kartu Anggota</span>
                 <ChevronRight size={16} className="ml-auto text-gray-400" />
               </Link>
+              <InstallAppButton/>
 
             </div>
           </div>
@@ -438,5 +444,56 @@ function StatCard({ icon, label, value, sub, color }) {
         <div className="text-xs text-gray-400">{sub}</div>
       </div>
     </div>
+  );
+}
+
+// ── Tombol install app (muncul jika belum install, hilang jika sudah) ──
+function InstallAppButton() {
+  const [prompt,    setPrompt]    = React.useState(null);
+  const [installed, setInstalled] = React.useState(false);
+
+  React.useEffect(() => {
+    if (window.matchMedia('(display-mode: standalone)').matches ||
+        window.navigator.standalone) { setInstalled(true); return; }
+    const h = e => { e.preventDefault(); setPrompt(e); };
+    window.addEventListener('beforeinstallprompt', h);
+    return () => window.removeEventListener('beforeinstallprompt', h);
+  }, []);
+
+  if (installed) return null;
+
+  const handleInstall = async () => {
+    if (!prompt) return;
+    prompt.prompt();
+    const { outcome } = await prompt.userChoice;
+    if (outcome === 'accepted') setInstalled(true);
+    setPrompt(null);
+  };
+
+  // iOS: tidak ada prompt, tampilkan petunjuk
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  if (isIOS) return (
+    <div className="flex items-center gap-3 p-3 rounded-xl bg-blue-50 border border-blue-100">
+      <Smartphone size={18} className="text-blue-600 shrink-0"/>
+      <div className="flex-1">
+        <p className="text-xs font-semibold text-blue-800">Install di iPhone</p>
+        <p className="text-[11px] text-blue-600">Share ⬆ → "Tambahkan ke Layar Utama"</p>
+      </div>
+    </div>
+  );
+
+  if (!prompt) return null;
+
+  return (
+    <button onClick={handleInstall}
+      className="flex items-center gap-3 p-3 rounded-xl bg-blue-50 hover:bg-blue-100
+        border border-blue-100 transition-colors w-full text-left">
+      <Download size={18} className="text-blue-600 shrink-0"/>
+      <div className="flex-1">
+        <p className="text-sm font-medium text-blue-800">Install Aplikasi SIGMA</p>
+        <p className="text-xs text-blue-500">Tambahkan ke home screen HP</p>
+      </div>
+      <ChevronRight size={16} className="text-blue-400"/>
+    </button>
   );
 }
