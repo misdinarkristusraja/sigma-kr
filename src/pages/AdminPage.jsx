@@ -513,16 +513,14 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     setMassRes([]);
     try {
       const json = await callEdge(supabase, { mode: 'provision_all' });
-      {
-      // Map ke format yang sama dengan massReset hasil
       const results = (json.results || []).map(r => ({
         user: {
-          nickname:       r.nickname || '',
-          nama_panggilan: r.nama     || '',
-          lingkungan:     r.lingkungan || '',
-          hp_ortu:        r.hp_ortu  || '',
-          hp_anak:        r.hp_anak  || '',
-          email:          r.email    || '',
+          nickname:       r.nickname    || '',
+          nama_panggilan: r.nama        || '',
+          lingkungan:     r.lingkungan  || '',
+          hp_ortu:        r.hp_ortu     || '',
+          hp_anak:        r.hp_anak     || '',
+          email:          r.email       || '',
         },
         password: r.password || '',
         ok:       r.ok,
