@@ -350,6 +350,9 @@ export default function DashboardPage() {
           {/* Streak Widget — Duolingo style */}
           <StreakWidget/>
 
+          {/* Latihan Misa Besar alert */}
+          <LatihanAlertWidget/>
+
           {/* Quick actions */}
           <div className="card">
             <h2 className="font-bold text-gray-900 mb-3 text-xs uppercase tracking-wide text-gray-500">Aksi Cepat</h2>
@@ -448,6 +451,63 @@ function StatCard({ icon, label, value, sub, color }) {
 }
 
 // ── Tombol install app (muncul jika belum install, hilang jika sudah) ──
+function LatihanAlertWidget() {
+  const { profile } = useAuth();
+  const [items, setItems] = React.useState([]);
+
+  React.useEffect(() => {
+    if (!profile?.id) return;
+    const today = new Date().toISOString().split('T')[0];
+    const since = new Date(Date.now() - 60*24*3600*1000).toISOString().split('T')[0];
+    // Ambil latihan yang sudah lewat dan belum tercatat hadir/absen
+    supabase
+      .from('event_latihan')
+      .select('id, tanggal, jam, event_id, events(perayaan, is_misa_besar)')
+      .lt('tanggal', today)
+      .gte('tanggal', since)
+      .then(({ data: lats }) => {
+        if (!lats?.length) return;
+        const misaBesar = lats.filter(l => l.events?.is_misa_besar);
+        if (!misaBesar.length) return;
+
+        const ids = misaBesar.map(l => l.id);
+        Promise.all([
+          supabase.from('event_latihan_attendance').select('latihan_id').eq('user_id', profile.id).in('latihan_id', ids),
+          supabase.from('event_latihan_absence').select('latihan_id').eq('user_id', profile.id).in('latihan_id', ids),
+          supabase.from('assignments').select('event_id').eq('user_id', profile.id)
+            .in('event_id', misaBesar.map(l => l.event_id)),
+        ]).then(([{ data: att }, { data: abs }, { data: asgn }]) => {
+          const attSet  = new Set((att||[]).map(a => a.latihan_id));
+          const absSet  = new Set((abs||[]).map(a => a.latihan_id));
+          const myEvIds = new Set((asgn||[]).map(a => a.event_id));
+          // Hanya tampilkan jika dia petugas di event tsb dan belum lapor
+          const pending = misaBesar.filter(l =>
+            myEvIds.has(l.event_id) && !attSet.has(l.id) && !absSet.has(l.id)
+          );
+          setItems(pending);
+        });
+      });
+  }, [profile?.id]);
+
+  if (!items.length) return null;
+
+  return (
+    <div className="card border-orange-200 bg-orange-50/50">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-orange-500 text-base">⚠️</span>
+        <h3 className="font-semibold text-orange-800 text-sm">Kehadiran Latihan Belum Dilaporkan</h3>
+      </div>
+      <p className="text-xs text-orange-700 mb-3">
+        Kamu belum melaporkan ketidakhadiran di {items.length} sesi latihan Misa Besar.
+      </p>
+      <a href="/latihan-misa-besar"
+        className="btn-sm text-xs bg-orange-100 hover:bg-orange-200 text-orange-800 rounded-xl px-3 py-1.5 inline-flex items-center gap-1">
+        Laporkan sekarang →
+      </a>
+    </div>
+  );
+}
+
 function InstallAppButton() {
   const [prompt,    setPrompt]    = React.useState(null);
   const [installed, setInstalled] = React.useState(false);

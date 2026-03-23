@@ -23,6 +23,7 @@ const NAV_ITEMS = [
   { icon: Calendar,        label: 'Jadwal Mingguan',   path: '/jadwal-mingguan', roles: PENG  },
   { icon: CalendarDays,    label: 'Misa Harian',       path: '/jadwal-harian',   roles: null  },
   { icon: BookOpen,        label: 'Latihan Misa Khusus',path: '/latihan-khusus', roles: null  },
+  { icon: BookOpen,        label: '🎓 Latihan Misa Besar', path: '/latihan-misa-besar', roles: null },
   { icon: QrCode,          label: 'Scan QR',           path: '/scan-qr',         roles: STAFF },
   { icon: ClipboardList,   label: 'Riwayat Scan',      path: '/riwayat-scan',    roles: STAFF },
   { icon: ArrowLeftRight,  label: 'Tukar Jadwal',      path: '/tukar-jadwal',    roles: null  },

@@ -25,6 +25,7 @@ const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
 const MonthlyReportPage  = lazy(() => import('./pages/MonthlyReportPage'));
 const SpecialMassPage    = lazy(() => import('./pages/SpecialMassPage'));
 const StreakPage          = lazy(() => import('./pages/StreakPage'));
+const LatihanMisaBesarPage = lazy(() => import('./pages/LatihanMisaBesarPage'));
 const PublicSchedule     = lazy(() => import('./pages/ScheduleDailyPage').then(m => ({ default: m.PublicSchedulePage })));
 const NotFound           = lazy(() => import('./pages/ScheduleDailyPage').then(m => ({ default: m.NotFoundPage })));
 
@@ -83,6 +84,7 @@ function AppRoutes() {
             <Route path="/admin"          element={<ProtectedRoute roles={ADMIN}><ErrorBoundary><AdminPage/></ErrorBoundary></ProtectedRoute>}/>
             <Route path="/laporan-bulanan"  element={<ProtectedRoute roles={PENG}><ErrorBoundary><MonthlyReportPage/></ErrorBoundary></ProtectedRoute>}/>
             <Route path="/latihan-khusus"   element={<ErrorBoundary><SpecialMassPage/></ErrorBoundary>}/>
+            <Route path="/latihan-misa-besar" element={<ErrorBoundary><LatihanMisaBesarPage/></ErrorBoundary>}/>
             <Route path="/streak"           element={<ErrorBoundary><StreakPage/></ErrorBoundary>}/>
           </Route>
 

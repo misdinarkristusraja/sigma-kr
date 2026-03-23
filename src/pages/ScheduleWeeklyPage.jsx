@@ -319,6 +319,7 @@ export default function ScheduleWeeklyPage() {
     // Jam dan tanggal per slot (Misa_Khusus)
     // slot_schedule[i] = { tanggal: 'YYYY-MM-DD', jam: 'HH.mm' }
     slot_schedule:   [{ tanggal: '', jam: '07.00' }],
+    is_misa_besar:   false,
   };
   const [addMisaForm, setAddMisaForm] = useState({...INIT_MISA_FORM});
 
@@ -335,7 +336,7 @@ export default function ScheduleWeeklyPage() {
       .select(`
         id, nama_event, tipe_event, tanggal_tugas, tanggal_latihan,
         perayaan, warna_liturgi, jumlah_misa, status_event, is_draft,
-        published_at, draft_note,
+        published_at, draft_note, is_misa_besar,
         pic_slot_1a, pic_hp_slot_1a, pic_slot_1b, pic_hp_slot_1b,
         pelatih_slot_1, pelatih_slot_2, pelatih_slot_3,
         pic_slot_2a, pic_hp_slot_2a, pic_slot_2b, pic_hp_slot_2b,
@@ -358,7 +359,7 @@ export default function ScheduleWeeklyPage() {
   // ── Load PIC options ───────────────────────────────────────
   useEffect(() => {
     supabase.from('users')
-      .select('id, nickname, nama_panggilan, hp_anak, hp_ortu')
+      .select('id, nickname, nama_panggilan, role, hp_anak, hp_ortu')
       .in('role', ['Administrator','Pengurus','Pelatih'])
       .eq('status', 'Active')
       .order('nama_panggilan')
@@ -512,6 +513,7 @@ export default function ScheduleWeeklyPage() {
       is_draft:          true,
       gcatholic_fetched: false,
       draft_note:        draftNote,
+      is_misa_besar:     f.is_misa_besar || false,
     });
 
     if (error) { toast.error('Gagal tambah: ' + error.message); return; }
@@ -643,6 +645,7 @@ export default function ScheduleWeeklyPage() {
       pic_slot_3b: editEvent.pic_slot_3b||null, pic_hp_slot_3b: editEvent.pic_hp_slot_3b||null,
       pic_slot_4a: editEvent.pic_slot_4a||null, pic_hp_slot_4a: editEvent.pic_hp_slot_4a||null,
       pic_slot_4b: editEvent.pic_slot_4b||null, pic_hp_slot_4b: editEvent.pic_hp_slot_4b||null,
+      is_misa_besar: editEvent.is_misa_besar || false,
     }).eq('id', editEvent.id);
     if (error) { toast.error(error.message); return; }
     toast.success('Jadwal diperbarui!');
@@ -900,8 +903,18 @@ export default function ScheduleWeeklyPage() {
       .in('role', ['Misdinar_Aktif', 'Misdinar_Retired']);
     if (!pool?.length) { setMonitorLoad(false); return; }
 
-    // Assignments 180 hari terakhir — pakai created_at (bukan tanggal_tugas)
-    // Ini yang dipakai generate jadwal: kapan TERAKHIR seseorang ditambahkan ke assignment
+    // Issue 5: Skor berdasarkan SCAN TUGAS terakhir, bukan jadwal/assignment
+    // Ini mencerminkan kapan seseorang terakhir benar-benar hadir tugas
+    const since180str = new Date(now - 180*24*3600*1000).toISOString().split('T')[0];
+
+    // Ambil scan tugas 180 hari terakhir
+    const { data: scanTugas } = await supabase.from('scan_records')
+      .select('user_id, timestamp, event_id, events(tanggal_tugas)')
+      .in('scan_type', ['tugas', 'walkin_tugas'])
+      .gte('timestamp', since180str + 'T00:00:00')
+      .order('timestamp', { ascending: false });
+
+    // Ambil assignments 180 hari untuk hitung jumlah jadwal (info display saja)
     const since180 = new Date(now - 180*24*3600*1000).toISOString();
     const { data: recent } = await supabase.from('assignments')
       .select('user_id, created_at, slot_number, events(tanggal_tugas)')
@@ -909,24 +922,35 @@ export default function ScheduleWeeklyPage() {
       .order('created_at', { ascending: false });
 
     // Per-user stats
-    const countMap    = {};  // total assignments 180 hari
-    const lastCreated = {};  // created_at assignment terakhir (untuk skor generate)
-    const lastEventDate = {}; // tanggal_tugas event terakhir (untuk info)
-    pool.forEach(u => { countMap[u.id] = 0; lastCreated[u.id] = null; lastEventDate[u.id] = null; });
+    const countMap      = {};  // total assignments 180 hari (info)
+    const lastScanDate  = {};  // timestamp scan tugas terakhir (untuk skor)
+    const lastEventDate = {};  // tanggal_tugas event terakhir (untuk display)
+    pool.forEach(u => {
+      countMap[u.id]     = 0;
+      lastScanDate[u.id] = null;
+      lastEventDate[u.id] = null;
+    });
 
+    // Hitung scan tugas per user (ambil yang terbaru)
+    (scanTugas || []).forEach(s => {
+      if (lastScanDate[s.user_id] === undefined) return;
+      if (!lastScanDate[s.user_id] || s.timestamp > lastScanDate[s.user_id]) {
+        lastScanDate[s.user_id] = s.timestamp;
+      }
+      const evTgl = s.events?.tanggal_tugas;
+      if (evTgl && (!lastEventDate[s.user_id] || evTgl > lastEventDate[s.user_id])) {
+        lastEventDate[s.user_id] = evTgl;
+      }
+    });
+
+    // Hitung jumlah assignments untuk display
     (recent||[]).forEach(a => {
       if (countMap[a.user_id] === undefined) return;
       countMap[a.user_id]++;
-      // created_at = kapan jadwal dibuat (termasuk draft)
-      if (!lastCreated[a.user_id] || a.created_at > lastCreated[a.user_id]) {
-        lastCreated[a.user_id] = a.created_at;
-      }
-      // tanggal_tugas = tanggal misa (untuk info display)
-      const evTgl = a.events?.tanggal_tugas;
-      if (evTgl && (!lastEventDate[a.user_id] || evTgl > lastEventDate[a.user_id])) {
-        lastEventDate[a.user_id] = evTgl;
-      }
     });
+
+    // lastCreated alias (dipakai rawScored di bawah)
+    const lastCreated = lastScanDate;
 
     // ── Scoring logic: pakai rekap_poin_mingguan K1-K6 ─────────────────
     // Skor dasar = hari sejak assignment terakhir
@@ -987,12 +1011,28 @@ export default function ScheduleWeeklyPage() {
       };
     }).sort((a, b) => b.score - a.score);
 
-    // Normalisasi relatif — semua punya persen minimal 1%
-    const maxScore = Math.max(...rawScored.map(u => u.score >= 9999 ? 0 : u.score), 1);
+    // Issue 6: Normalisasi berdasarkan distribusi score, bukan ratio ke max
+    // Pakai min-max scaling: (score - min) / (max - min) * 100
+    // Ini menghasilkan distribusi nyata — orang dengan score sama dapat % sama
+    // Orang dengan scan terbaru dapat % rendah, yang lama dapat % tinggi
+    const nonNewScores = rawScored.filter(u => u.score < 9999).map(u => u.score);
+    const minScore = nonNewScores.length ? Math.min(...nonNewScores) : 1;
+    const maxScore = nonNewScores.length ? Math.max(...nonNewScores) : 1;
+    const scoreRange = maxScore - minScore;
+
     const withPct = rawScored.map((u, i) => {
-      const pct = u.score >= 9999 ? 100
-                : maxScore > 0   ? Math.max(1, Math.round((u.score / maxScore) * 100))
-                : 1;
+      let pct;
+      if (u.score >= 9999) {
+        pct = 100; // belum pernah scan = tertinggi
+      } else if (scoreRange === 0) {
+        // Semua skor sama — distribusi berdasarkan rank (rank 1 = 100%, rank N = proportional)
+        const n = nonNewScores.length;
+        pct = n > 1 ? Math.round(100 - ((i / (n - 1)) * 60)) : 50;
+      } else {
+        // Min-max scaling: skor lebih tinggi = prioritas lebih tinggi
+        pct = Math.round(((u.score - minScore) / scoreRange) * 95) + 5;
+      }
+      pct = Math.min(100, Math.max(1, pct));
       const tier = u.score >= 9999 ? 'new'
                  : u.score >= 30   ? 'high'
                  : u.score >= 7    ? 'medium'
@@ -1296,7 +1336,10 @@ export default function ScheduleWeeklyPage() {
                         : <span className="badge-green text-xs gap-1 flex items-center"><Globe size={10}/>Published</span>
                       }
                     </div>
-                    <h3 className="font-bold text-gray-900 text-xl leading-tight">{ev.perayaan || ev.nama_event}</h3>
+                    <h3 className="font-bold text-gray-900 text-xl leading-tight">
+                      {ev.perayaan || ev.nama_event}
+                      {ev.is_misa_besar && <span className="ml-2 text-xs font-normal bg-brand-800 text-white px-2 py-0.5 rounded-full align-middle">🎓 Misa Besar</span>}
+                    </h3>
                     {/* No 4: Subtitle dates */}
                     <p className="text-sm text-gray-500 mt-0.5">
                       {(() => {
@@ -1479,6 +1522,20 @@ export default function ScheduleWeeklyPage() {
                   </select>
                 </div>
               </div>
+
+              {/* Misa Besar flag */}
+              <div className={`p-3 rounded-xl border-2 cursor-pointer transition-all
+                ${editEvent.is_misa_besar ? 'border-brand-800 bg-brand-50' : 'border-gray-200 bg-gray-50'}`}
+                onClick={()=>setEditEvent(v=>({...v, is_misa_besar: !v.is_misa_besar}))}>
+                <div className="flex items-center gap-3">
+                  <input type="checkbox" checked={!!editEvent.is_misa_besar} readOnly
+                    className="w-4 h-4 accent-brand-800"/>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">🎓 Misa Besar</p>
+                    <p className="text-xs text-gray-500">Aktifkan kehadiran latihan wajib untuk event ini</p>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="mb-5">
@@ -1531,12 +1588,13 @@ export default function ScheduleWeeklyPage() {
 
       {/* ── Tambah Misa Khusus Modal ── */}
       {showAddMisa && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
-            <div className="flex items-center justify-between mb-5">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-3 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full max-h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 pt-5 pb-3 border-b border-gray-100 flex-shrink-0">
               <h3 className="font-bold text-lg">Tambah Misa Khusus / Hari Raya</h3>
               <button onClick={() => setShowAddMisa(false)}><X size={20}/></button>
             </div>
+            <div className="overflow-y-auto flex-1 px-6 py-4">
 
             {/* Pilih tipe — 2 kondisi sederhana */}
             <div className="mb-5">
@@ -1649,6 +1707,23 @@ export default function ScheduleWeeklyPage() {
                   {WARNA_OPTIONS.map(w=><option key={w}>{w}</option>)}
                 </select>
               </div>
+
+              {/* Misa Besar flag */}
+              <div className={`p-3 rounded-xl border-2 cursor-pointer transition-all
+                ${addMisaForm.is_misa_besar ? 'border-brand-800 bg-brand-50' : 'border-gray-200 bg-gray-50'}`}
+                onClick={()=>setAddMisaForm(f=>({...f, is_misa_besar: !f.is_misa_besar}))}>
+                <div className="flex items-center gap-3">
+                  <input type="checkbox" checked={addMisaForm.is_misa_besar} readOnly
+                    className="w-4 h-4 accent-brand-800"/>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">🎓 Misa Besar</p>
+                    <p className="text-xs text-gray-500">
+                      Aktifkan untuk misa yang wajib ada latihan khusus (Natal, Paskah, dll).
+                      Sistem akan melacak kehadiran latihan tiap petugas.
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Preview ringkasan */}
@@ -1664,7 +1739,8 @@ export default function ScheduleWeeklyPage() {
               </div>
             )}
 
-            <div className="flex gap-2 mt-4">
+            </div>{/* end scroll area */}
+            <div className="flex gap-2 px-6 py-4 border-t border-gray-100 flex-shrink-0">
               <button onClick={addMisaKhusus} className="btn-primary flex-1 gap-2">
                 <Check size={16}/> Tambahkan sebagai Draft
               </button>
