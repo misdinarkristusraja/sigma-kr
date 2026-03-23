@@ -9,38 +9,49 @@ import * as XLSX from 'xlsx';
 // ── Helper: reset password via Edge Function ─────────────────────────
 // pgcrypto dan GoTrue bcrypt tidak kompatibel → harus pakai Supabase Admin API
 // Edge function ada di: supabase/functions/admin-reset-password/index.ts
-async function resetPasswordViaEdge(supabaseClient, userId, newPassword) {
-  const { data: { session } } = await supabaseClient.auth.getSession();
-  if (!session?.access_token) throw new Error('Sesi login tidak ditemukan. Coba logout dan login ulang.');
+async function getEdgeToken(supabaseClient) {
+  // Refresh session dulu agar token selalu fresh
+  const { data: refreshData } = await supabaseClient.auth.refreshSession();
+  const token = refreshData?.session?.access_token;
+  if (token) return token;
+  // Fallback ke session yang ada
+  const { data: sessData } = await supabaseClient.auth.getSession();
+  const fallback = sessData?.session?.access_token;
+  if (!fallback) throw new Error('Sesi tidak ditemukan — silakan logout dan login ulang');
+  return fallback;
+}
 
+async function callEdge(supabaseClient, payload) {
+  const token = await getEdgeToken(supabaseClient);
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
-
   let res;
   try {
     res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session.access_token}`,
+        'Authorization': `Bearer ${token}`,
         'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
       },
-      body: JSON.stringify({ mode: 'reset', user_id: userId, new_password: newPassword }),
+      body: JSON.stringify(payload),
     });
-  } catch (fetchErr) {
-    throw new Error(`Tidak bisa terhubung ke Edge Function: ${fetchErr.message}`);
+  } catch (e) {
+    throw new Error(`Network error: ${e.message}`);
   }
-
-  // Handle non-JSON responses (misal: 404 function not found)
   const text = await res.text();
   let data;
   try { data = JSON.parse(text); }
-  catch { throw new Error(`Edge Function belum di-deploy atau error server (HTTP ${res.status}): ${text.slice(0, 100)}`); }
+  catch {
+    if (res.status === 404) throw new Error('Edge Function belum di-deploy. Lihat panduan di Admin → User & Role.');
+    throw new Error(`HTTP ${res.status}: ${text.slice(0, 120)}`);
+  }
+  if (!data.ok && !data.results) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
 
-  if (res.status === 404) throw new Error('Edge Function "admin-reset-password" belum di-deploy di Supabase. Ikuti panduan deployment.');
-  if (res.status === 401) throw new Error('Token tidak valid. Coba logout dan login ulang.');
-  if (res.status === 403) throw new Error('Akun ini tidak punya izin reset password (bukan Admin/Pengurus).');
-  if (!data.ok) throw new Error(data.error || `Server error HTTP ${res.status}`);
-
+async function resetPasswordViaEdge(supabaseClient, userId, newPassword) {
+  const data = await callEdge(supabaseClient, { mode: 'reset', user_id: userId, new_password: newPassword });
+  if (!data.ok) throw new Error(data.error || 'Reset gagal');
   return data;
 }
 
@@ -501,23 +512,8 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     setMassLoad(true);
     setMassRes([]);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`,
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-        },
-        body: JSON.stringify({ mode: 'provision_all' }),
-      });
-      const json = await res.json();
-      if (!json.ok && !json.results) {
-        toast.error('Gagal: ' + (json.error || 'Unknown error'));
-        setMassLoad(false);
-        return;
-      }
+      const json = await callEdge(supabase, { mode: 'provision_all' });
+      {
       // Map ke format yang sama dengan massReset hasil
       const results = (json.results || []).map(r => ({
         user: {

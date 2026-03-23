@@ -126,18 +126,26 @@ export default function MemberDetailPage() {
     setResetting(true);
     try {
       // Gunakan Edge Function admin-reset-password (Supabase Admin API)
-      const { data: { session } } = await supabase.auth.getSession();
+      // Refresh session dulu agar token selalu fresh
+      const { data: refreshed } = await supabase.auth.refreshSession();
+      const token = refreshed?.session?.access_token
+        ?? (await supabase.auth.getSession()).data?.session?.access_token;
+      if (!token) throw new Error('Sesi tidak valid — login ulang');
+
       const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
-        body: JSON.stringify({ user_id: id, new_password: newPw }),
+        body: JSON.stringify({ mode: 'reset', user_id: id, new_password: newPw }),
       });
-      const result = await res.json();
+      const text = await res.text();
+      let result;
+      try { result = JSON.parse(text); }
+      catch { throw new Error(res.status === 404 ? 'Edge Function belum di-deploy' : `HTTP ${res.status}`); }
       if (!result.ok) throw new Error(result.error || 'Reset gagal');
 
       setLastPwForWA(newPw);
