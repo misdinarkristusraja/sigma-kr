@@ -9,20 +9,11 @@ import * as XLSX from 'xlsx';
 // ── Helper: reset password via Edge Function ─────────────────────────
 // pgcrypto dan GoTrue bcrypt tidak kompatibel → harus pakai Supabase Admin API
 // Edge function ada di: supabase/functions/admin-reset-password/index.ts
-async function getEdgeToken(supabaseClient) {
-  // Refresh session dulu agar token selalu fresh
-  const { data: refreshData } = await supabaseClient.auth.refreshSession();
-  const token = refreshData?.session?.access_token;
-  if (token) return token;
-  // Fallback ke session yang ada
-  const { data: sessData } = await supabaseClient.auth.getSession();
-  const fallback = sessData?.session?.access_token;
-  if (!fallback) throw new Error('Sesi tidak ditemukan — silakan logout dan login ulang');
-  return fallback;
-}
+// Panggil Edge Function dengan SIGMA_SECRET — tidak perlu token JWT
+async function callEdge(_supabaseClient, payload) {
+  const secret = import.meta.env.VITE_SIGMA_SECRET;
+  if (!secret) throw new Error('VITE_SIGMA_SECRET belum di-set di environment variables Vercel');
 
-async function callEdge(supabaseClient, payload) {
-  const token = await getEdgeToken(supabaseClient);
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
   let res;
   try {
@@ -30,10 +21,9 @@ async function callEdge(supabaseClient, payload) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
         'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, secret }),
     });
   } catch (e) {
     throw new Error(`Network error: ${e.message}`);
@@ -42,7 +32,7 @@ async function callEdge(supabaseClient, payload) {
   let data;
   try { data = JSON.parse(text); }
   catch {
-    if (res.status === 404) throw new Error('Edge Function belum di-deploy. Lihat panduan di Admin → User & Role.');
+    if (res.status === 404) throw new Error('Edge Function belum di-deploy.');
     throw new Error(`HTTP ${res.status}: ${text.slice(0, 120)}`);
   }
   if (!data.ok && !data.results) throw new Error(data.error || `HTTP ${res.status}`);

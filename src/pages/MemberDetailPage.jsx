@@ -126,21 +126,17 @@ export default function MemberDetailPage() {
     setResetting(true);
     try {
       // Gunakan Edge Function admin-reset-password (Supabase Admin API)
-      // Refresh session dulu agar token selalu fresh
-      const { data: refreshed } = await supabase.auth.refreshSession();
-      const token = refreshed?.session?.access_token
-        ?? (await supabase.auth.getSession()).data?.session?.access_token;
-      if (!token) throw new Error('Sesi tidak valid — login ulang');
+      const secret = import.meta.env.VITE_SIGMA_SECRET;
+      if (!secret) throw new Error('VITE_SIGMA_SECRET belum di-set di Vercel env vars');
 
       const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
           'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
-        body: JSON.stringify({ mode: 'reset', user_id: id, new_password: newPw }),
+        body: JSON.stringify({ mode: 'reset', user_id: id, new_password: newPw, secret }),
       });
       const text = await res.text();
       let result;
