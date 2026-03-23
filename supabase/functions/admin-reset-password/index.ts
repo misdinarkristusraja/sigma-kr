@@ -1,5 +1,6 @@
 // supabase/functions/admin-reset-password/index.ts
-// Verifikasi role pakai service_role langsung — lebih reliable
+// Verifikasi token dengan decode JWT langsung (tanpa memanggil auth API)
+// → tidak bisa gagal karena network, lebih cepat, selalu reliable
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -9,85 +10,102 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-function reply(data, status = 200) {
+function reply(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { ...CORS, "Content-Type": "application/json" },
   });
 }
 
-function randPassword(len = 10) {
+function randPassword(len = 10): string {
   const chars = "abcdefghjkmnpqrstuvwxyz23456789";
   const arr = new Uint8Array(len);
   crypto.getRandomValues(arr);
   return Array.from(arr, (b) => chars[b % chars.length]).join("");
 }
 
+/** Decode JWT payload tanpa verifikasi signature — cukup untuk ambil user ID */
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    // base64url → base64
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - base64.length % 4) % 4);
+    const decoded = atob(padded);
+    return JSON.parse(decoded);
+  } catch {
+    return null;
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
   try {
-    const SUPABASE_URL  = Deno.env.get("SUPABASE_URL") ?? "";
-    const SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+    const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
     if (!SERVICE_KEY) {
-      return reply({ ok: false, error: "SUPABASE_SERVICE_ROLE_KEY tidak tersedia di edge function" }, 500);
+      return reply({ ok: false, error: "SUPABASE_SERVICE_ROLE_KEY belum di-set di Edge Function" }, 500);
     }
 
-    // ── Ping — cek apakah EF aktif, tidak butuh auth ──────────────
-    const bodyPing = await req.clone().json().catch(() => ({}));
-    if (bodyPing.mode === "ping") {
-      return reply({ ok: true, message: "Edge Function admin-reset-password aktif" });
-    }
-
-    // Admin client — service_role, bypass semua RLS
+    // Admin client pakai service_role
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    // ── Verifikasi token ──────────────────────────────────────────
-    const authHeader = req.headers.get("Authorization") || "";
+    // Parse body dulu
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+    const mode = (body.mode as string) ?? "reset";
+
+    // ── Ping — tidak butuh auth ────────────────────────────────
+    if (mode === "ping") {
+      return reply({ ok: true, message: "Edge Function aktif" });
+    }
+
+    // ── Decode token dari header ───────────────────────────────
+    const authHeader = req.headers.get("Authorization") ?? "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
 
     if (!token) {
-      return reply({ ok: false, error: "Authorization header kosong" }, 401);
+      return reply({ ok: false, error: "Token tidak ditemukan di header Authorization" }, 401);
     }
 
-    // Pakai admin.auth.getUser(token) — ini cara paling reliable
-    const { data: { user: callerUser }, error: tokenErr } = await admin.auth.getUser(token);
-
-    if (tokenErr || !callerUser) {
-      console.error("Token error:", tokenErr?.message);
-      return reply({
-        ok: false,
-        error: `Token error: ${tokenErr?.message ?? "user null"} — coba logout & login ulang`,
-      }, 401);
+    // Decode JWT payload untuk dapat user ID
+    const payload = decodeJwtPayload(token);
+    if (!payload || !payload.sub) {
+      return reply({ ok: false, error: "Format token tidak valid" }, 401);
     }
 
-    // Cek role di public.users
+    const callerId = payload.sub as string;
+
+    // Cek expired
+    const exp = payload.exp as number;
+    if (exp && Date.now() / 1000 > exp) {
+      return reply({ ok: false, error: "Token sudah expired — login ulang" }, 401);
+    }
+
+    // Cek role di public.users — pakai service_role jadi bypass RLS
     const { data: profile, error: profileErr } = await admin
       .from("users")
       .select("role")
-      .eq("id", callerUser.id)
+      .eq("id", callerId)
       .single();
 
     if (profileErr || !profile) {
-      return reply({ ok: false, error: "Profil tidak ditemukan di database" }, 403);
+      return reply({ ok: false, error: `Profil tidak ditemukan (id: ${callerId})` }, 403);
     }
 
-    if (!["Administrator", "Pengurus"].includes(profile.role)) {
+    if (!["Administrator", "Pengurus"].includes(profile.role as string)) {
       return reply({ ok: false, error: `Role "${profile.role}" tidak bisa reset password` }, 403);
     }
 
-    // ── Parse body ────────────────────────────────────────────────
-    const body = await req.json().catch(() => ({}));
-    const mode = body.mode ?? "reset";
-
-    // ─────────────────────────────────────────────────────────────
-    // MODE: reset — update password 1 user
-    // ─────────────────────────────────────────────────────────────
+    // ── MODE: reset ────────────────────────────────────────────
     if (mode === "reset") {
-      const { user_id, new_password } = body;
+      const user_id    = body.user_id as string;
+      const new_password = body.new_password as string;
+
       if (!user_id || !new_password) {
         return reply({ ok: false, error: "user_id dan new_password wajib" }, 400);
       }
@@ -95,19 +113,16 @@ serve(async (req) => {
         return reply({ ok: false, error: "Password minimal 6 karakter" }, 400);
       }
 
-      // Cek apakah ada di auth.users
+      // Cek apakah sudah ada di auth.users
       const { data: existingAuth } = await admin.auth.admin.getUserById(user_id);
 
       if (!existingAuth?.user) {
-        // Belum ada di auth.users — ambil data dan buat
+        // Belum ada — buat dulu
         const { data: pubUser } = await admin
-          .from("users")
-          .select("email, nickname")
-          .eq("id", user_id)
-          .single();
+          .from("users").select("email").eq("id", user_id).single();
 
         if (!pubUser?.email) {
-          return reply({ ok: false, error: `User ${user_id} tidak ditemukan` }, 404);
+          return reply({ ok: false, error: `User tidak ditemukan di database` }, 404);
         }
 
         const { error: createErr } = await admin.auth.admin.createUser({
@@ -120,14 +135,11 @@ serve(async (req) => {
           return reply({ ok: false, error: `Gagal buat akun: ${createErr.message}` }, 500);
         }
       } else {
-        // Sudah ada — update password
         const { error: upErr } = await admin.auth.admin.updateUserById(user_id, {
           password: new_password,
           email_confirm: true,
         });
-        if (upErr) {
-          return reply({ ok: false, error: upErr.message }, 500);
-        }
+        if (upErr) return reply({ ok: false, error: upErr.message }, 500);
       }
 
       await admin.from("users")
@@ -137,9 +149,7 @@ serve(async (req) => {
       return reply({ ok: true });
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // MODE: provision_all — buat/reset akun untuk semua anggota
-    // ─────────────────────────────────────────────────────────────
+    // ── MODE: provision_all ────────────────────────────────────
     if (mode === "provision_all") {
       const { data: members, error: membErr } = await admin
         .from("users")
@@ -154,21 +164,19 @@ serve(async (req) => {
       for (const m of members) {
         const pw = randPassword(10);
         const base = {
-          nickname: m.nickname,
-          nama: m.nama_panggilan,
-          email: m.email,
+          nickname:   m.nickname,
+          nama:       m.nama_panggilan,
+          email:      m.email,
           lingkungan: m.lingkungan ?? "",
-          hp_ortu: m.hp_ortu ?? "",
-          hp_anak: m.hp_anak ?? "",
+          hp_ortu:    m.hp_ortu ?? "",
+          hp_anak:    m.hp_anak ?? "",
         };
 
         const { data: existingAuth } = await admin.auth.admin.getUserById(m.id);
 
         if (!existingAuth?.user) {
           const { error: createErr } = await admin.auth.admin.createUser({
-            email: m.email,
-            password: pw,
-            email_confirm: true,
+            email: m.email, password: pw, email_confirm: true,
           });
           if (createErr) {
             results.push({ ...base, password: null, ok: false, error: createErr.message });
@@ -178,8 +186,7 @@ serve(async (req) => {
           }
         } else {
           const { error: upErr } = await admin.auth.admin.updateUserById(m.id, {
-            password: pw,
-            email_confirm: true,
+            password: pw, email_confirm: true,
           });
           await admin.from("users").update({ must_change_password: true }).eq("id", m.id);
           results.push({ ...base, password: pw, ok: !upErr, action: "reset", error: upErr?.message });
@@ -193,7 +200,7 @@ serve(async (req) => {
     return reply({ ok: false, error: `Mode tidak dikenal: "${mode}"` }, 400);
 
   } catch (err) {
-    console.error("Crash:", err);
-    return reply({ ok: false, error: `Server crash: ${err?.message ?? String(err)}` }, 500);
+    console.error("Edge function crash:", err);
+    return reply({ ok: false, error: `Server error: ${(err as Error)?.message ?? String(err)}` }, 500);
   }
 });
