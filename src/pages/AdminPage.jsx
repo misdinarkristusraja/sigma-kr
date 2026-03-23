@@ -528,27 +528,38 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
   }
 
   async function massResetAllPasswords() {
-    // Exclude Administrator accounts from mass reset
-    const targets = users.filter(u => u.status === 'Active' && u.role !== 'Administrator');
-    if (!confirm(`Reset password ${targets.length} anggota aktif (Admin TIDAK termasuk)?\nSetiap orang akan wajib ganti password saat login.`)) return;
+    if (!confirm(
+      `Reset password semua anggota aktif?\n` +
+      `Proses dilakukan di server — tidak perlu menunggu lama.\n` +
+      `Setiap anggota wajib ganti password saat login berikutnya.`
+    )) return;
     setMassLoad(true);
     setMassRes([]);
-    const results = [];
-    for (const u of targets) {
-      const pw = genPassword(8);
-      try {
-        await resetPasswordViaEdge(supabase, u.id, pw);
-        results.push({ user: u, password: pw, ok: true });
-      } catch (e) {
-        results.push({ user: u, password: pw, ok: false, error: e.message });
-      }
+    try {
+      // Gunakan provision_all mode — proses di server sekaligus, jauh lebih cepat
+      const json = await callEdge(supabase, { mode: 'provision_all' });
+      const results = (json.results || []).map(r => ({
+        user: {
+          nickname:       r.nickname    || '',
+          nama_panggilan: r.nama        || '',
+          lingkungan:     r.lingkungan  || '',
+          hp_ortu:        r.hp_ortu     || '',
+          hp_anak:        r.hp_anak     || '',
+          email:          r.email       || '',
+        },
+        password: r.password || '',
+        ok:       r.ok,
+        error:    r.error,
+      }));
+      setMassRes(results);
+      const ok = results.filter(r => r.ok).length;
+      toast.success(`${ok}/${results.length} password berhasil direset!`);
+      downloadMassResetExcel(results);
+      loadUsers();
+    } catch (e) {
+      toast.error('Gagal: ' + e.message);
     }
-    setMassRes(results);
     setMassLoad(false);
-    const ok = results.filter(r=>r.ok).length;
-    toast.success(`${ok}/${results.length} password berhasil direset! (Admin dilewati)`);
-    // Auto-download Excel
-    downloadMassResetExcel(results);
   }
 
   function downloadMassResetExcel(results) {

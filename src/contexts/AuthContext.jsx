@@ -10,9 +10,17 @@ export function AuthProvider({ children }) {
 
   const fetchProfile = useCallback(async () => {
     try {
+      // Try RPC first
       const { data, error } = await supabase.rpc('get_my_profile');
-      if (error) { console.error('fetchProfile:', error.message); return; }
-      if (data) setProfile(data);
+      if (!error && data) { setProfile(data); return; }
+
+      // Fallback: direct query (works even if RPC not deployed yet)
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: row, error: rowErr } = await supabase
+        .from('users').select('*').eq('id', user.id).single();
+      if (!rowErr && row) setProfile(row);
+      else console.error('fetchProfile fallback failed:', rowErr?.message);
     } catch (err) {
       console.error('fetchProfile exception:', err);
     }

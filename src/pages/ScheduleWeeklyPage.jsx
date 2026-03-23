@@ -119,44 +119,65 @@ function parseLiturgiHTML(html, year) {
 
 // ─── Export PNG template (format tabel seperti contoh) ─────────────────────
 function buildExportHTML(ev, assignments, pelatihOptions = []) {
+  const isMisaKhusus = ev.tipe_event === 'Misa_Khusus';
+  const nSlots = isMisaKhusus ? (ev.jumlah_misa || 1) : 4;
+
+  // Parse jam khusus dari draft_note
+  const jamMap = {};
+  if (isMisaKhusus && ev.draft_note) {
+    const matches = ev.draft_note.matchAll(/Slot (\d+): ([\d.]+)/g);
+    for (const m of matches) jamMap[Number(m[1])] = m[2];
+  }
+
   const bySlot = {};
-  for (let s = 1; s <= 4; s++) bySlot[s] = assignments.filter(a => a.slot_number === s);
+  for (let s = 1; s <= nSlots; s++) bySlot[s] = assignments.filter(a => a.slot_number === s);
 
   const perayaan = ev.perayaan || ev.nama_event || 'MISA MINGGUAN';
 
-  // Format tanggal Indonesia (local, bukan toISOString)
   function fmtTglIndo(dateStr) {
     if (!dateStr) return '';
     const [y, mo, d] = dateStr.split('-').map(Number);
-    return `${d} ${MONTHS_UPPER[mo - 1]} ${y}`;
+    const HARI_UPPER = ['MINGGU','SENIN','SELASA','RABU','KAMIS','JUMAT','SABTU'];
+    const dt = new Date(y, mo - 1, d);
+    return `${HARI_UPPER[dt.getDay()]} ${d} ${MONTHS_UPPER[mo - 1]} ${y}`;
   }
 
-  const satTgl = fmtTglIndo(ev.tanggal_latihan);
-  const sunTgl = fmtTglIndo(ev.tanggal_tugas);
+  // Subtitle: untuk misa khusus tampilkan hari tugas yang benar
+  const subtitleTgl = isMisaKhusus
+    ? fmtTglIndo(ev.tanggal_tugas)
+    : ev.tanggal_latihan
+      ? `${fmtTglIndo(ev.tanggal_latihan)} s/d ${fmtTglIndo(ev.tanggal_tugas)}`
+      : fmtTglIndo(ev.tanggal_tugas);
 
   let rows = '';
-  for (let slot = 1; slot <= 4; slot++) {
-    const info    = SLOT_INFO[slot];
+  for (let slot = 1; slot <= nSlots; slot++) {
+    const info    = SLOT_INFO[slot] || SLOT_INFO[1];
     const people  = bySlot[slot] || [];
     const picA    = ev[`pic_slot_${slot}a`] || '—';
     const picB    = ev[`pic_slot_${slot}b`] || '—';
     const hpA     = ev[`pic_hp_slot_${slot}a`] || '';
     const hpB     = ev[`pic_hp_slot_${slot}b`] || '';
-    const tglSlot = slot === 1 ? satTgl : sunTgl;
+    // Tanggal per slot: misa khusus semua = tanggal_tugas; mingguan slot1 = sabtu
+    const tglSlot = isMisaKhusus
+      ? fmtTglIndo(ev.tanggal_tugas)
+      : (slot === 1 && ev.tanggal_latihan ? fmtTglIndo(ev.tanggal_latihan) : fmtTglIndo(ev.tanggal_tugas));
     const rowspan = Math.max(people.length, 1);
 
-    // Show PIC 1 phone prominently (main contact)
-    const pic1Phone = hpA || '';
-    const hp = pic1Phone ? `HP: ${pic1Phone}` : '';
+    // Label jam: misa khusus pakai jam dari draft_note
+    const jamLabel = isMisaKhusus && jamMap[slot]
+      ? `MISA ${slot} (${jamMap[slot]})`
+      : info.label.toUpperCase();
+
+    const hp = hpA ? `HP PIC: ${hpA}` : '';
 
     const tanggalCell = `
       <td rowspan="${rowspan}" style="
         border:1px solid #333; padding:8px 10px; vertical-align:middle;
         text-align:center; font-size:11px; font-weight:bold; line-height:1.6;
         min-width:160px; background:#f9f9f9;">
-        ${info.label.toUpperCase()}<br>
+        ${jamLabel}<br>
         ${tglSlot}<br>
-        JAM (${info.jam})<br>
+        ${isMisaKhusus ? '' : `JAM (${jamMap[slot] || info.jam})<br>`}
         PIC: ${picA.toUpperCase()}${picB !== '—' ? ' &amp; ' + picB.toUpperCase() : ''}<br>
         <span style="font-weight:normal;font-size:10px;color:#555;">${hp}</span>
       </td>`;
@@ -227,9 +248,10 @@ function buildExportHTML(ev, assignments, pelatihOptions = []) {
         <thead>
           <tr>
             <th colspan="4" style="
-              border:2px solid #333; padding:12px; text-align:center;
+              border:2px solid #333; padding:10px 12px; text-align:center;
               font-size:16px; font-weight:bold; letter-spacing:1px;">
               ${perayaan.toUpperCase()}
+              <div style="font-size:11px;font-weight:normal;color:#555;margin-top:3px;">${subtitleTgl}</div>
             </th>
           </tr>
           <tr>
@@ -705,6 +727,108 @@ export default function ScheduleWeeklyPage() {
     );
   }
 
+  // ── EditPetugasSection: tambah/hapus petugas di edit modal ───
+  function EditPetugasSection({ ev, onSaved }) {
+    const [members, setMembers] = React.useState([]);
+    const [assigns, setAssigns] = React.useState({}); // { slot: [userId,...] }
+    const [saving,  setSaving]  = React.useState(false);
+    const [loaded,  setLoaded]  = React.useState(false);
+
+    const nSlots = ev.tipe_event === 'Misa_Khusus' ? (ev.jumlah_misa || 1) : 4;
+
+    React.useEffect(() => {
+      if (!ev?.id || loaded) return;
+      (async () => {
+        const [{ data: mem }, { data: asgn }] = await Promise.all([
+          supabase.from('users').select('id, nickname, nama_panggilan, lingkungan, pendidikan')
+            .in('status', ['Active']).in('role', ['Misdinar_Aktif', 'Misdinar_Retired']).order('nama_panggilan'),
+          supabase.from('assignments').select('id, slot_number, user_id').eq('event_id', ev.id),
+        ]);
+        setMembers(mem || []);
+        const map = {};
+        for (let s = 1; s <= nSlots; s++) {
+          map[s] = (asgn || []).filter(a => a.slot_number === s).map(a => a.user_id);
+        }
+        setAssigns(map);
+        setLoaded(true);
+      })();
+    }, [ev?.id]);
+
+    function toggleMember(slot, userId) {
+      setAssigns(prev => {
+        const cur = prev[slot] || [];
+        return {
+          ...prev,
+          [slot]: cur.includes(userId)
+            ? cur.filter(id => id !== userId)
+            : [...cur, userId],
+        };
+      });
+    }
+
+    async function savePetugas() {
+      setSaving(true);
+      // Hapus semua assignments lama
+      await supabase.from('assignments').delete().eq('event_id', ev.id);
+      // Insert baru
+      const rows = [];
+      for (let s = 1; s <= nSlots; s++) {
+        (assigns[s] || []).forEach((uid, i) => {
+          rows.push({ event_id: ev.id, user_id: uid, slot_number: s, position: i + 1 });
+        });
+      }
+      if (rows.length) await supabase.from('assignments').insert(rows);
+      toast.success('Petugas diperbarui!');
+      setSaving(false);
+      onSaved();
+    }
+
+    if (!loaded) return (
+      <div className="text-xs text-gray-400 text-center py-2">Memuat data petugas…</div>
+    );
+
+    return (
+      <div className="border-t border-gray-100 pt-4 mt-2">
+        <h4 className="font-semibold text-gray-700 mb-3 text-sm flex items-center gap-2">
+          <UserCheck size={15} className="text-green-600"/> Edit Petugas per Slot
+        </h4>
+        {Array.from({length: nSlots}, (_,i) => i+1).map(slot => {
+          const info     = SLOT_INFO[slot] || SLOT_INFO[1];
+          const selected = assigns[slot] || [];
+          return (
+            <div key={slot} className="mb-3">
+              <p className="text-xs font-bold text-gray-600 mb-1.5">
+                {info.time} — {selected.length} dipilih
+              </p>
+              <div className="grid grid-cols-2 gap-1 max-h-48 overflow-y-auto pr-1">
+                {members.map(m => {
+                  const isSelected = selected.includes(m.id);
+                  return (
+                    <button key={m.id} type="button"
+                      onClick={() => toggleMember(slot, m.id)}
+                      className={`text-left text-xs px-2 py-1.5 rounded-lg border flex items-center gap-1.5 transition-colors
+                        ${isSelected ? 'bg-green-50 border-green-300 text-green-800' : 'bg-white border-gray-200 hover:bg-gray-50 text-gray-700'}`}>
+                      <span className={`w-3.5 h-3.5 rounded flex items-center justify-center shrink-0
+                        ${isSelected ? 'bg-green-500' : 'border border-gray-300'}`}>
+                        {isSelected && <Check size={9} className="text-white"/>}
+                      </span>
+                      <span className="truncate">{m.nama_panggilan}</span>
+                      <span className="text-gray-400 text-[10px] ml-auto shrink-0">{m.pendidikan}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+        <button onClick={savePetugas} disabled={saving}
+          className="btn-primary btn-sm w-full gap-2 mt-2">
+          <Check size={14}/> {saving ? 'Menyimpan…' : 'Simpan Petugas'}
+        </button>
+      </div>
+    );
+  }
+
   // ── RENDER ─────────────────────────────────────────────────
   const draftCount = events.filter(e => e.is_draft).length;
   const pubCount   = events.filter(e => !e.is_draft).length;
@@ -796,17 +920,22 @@ export default function ScheduleWeeklyPage() {
       });
     });
 
+    // ── Skor prioritas: selalu minimal 1, dihitung dari 30 hari lalu ──────
+    // baseScore = hari sejak tugas terakhir (minimal 1 hari, bukan 0)
+    // Jika belum pernah: baseScore = 9999 (prioritas tertinggi)
+    // Penalti K6 (absen total) = -5 hari, K5 (latihan saja) = -2 hari
+    // Score akhir selalu >= 1 (semua pasti punya prioritas)
     const rawScored = pool.map(u => {
       const lc        = lastCreated[u.id];
-      const baseScore = lc
-        ? Math.max(0, Math.floor((now - new Date(lc)) / 86400000))
+      const daysSince = lc
+        ? Math.max(1, Math.floor((now - new Date(lc)) / 86400000))
         : 9999;
-      // Penalti: K6 mengurangi "kredit tunggu" sedikit
       const penalty   = (k6Map[u.id] || 0) * 5 + (k5Map[u.id] || 0) * 2;
-      const score     = baseScore >= 9999 ? 9999 : Math.max(0, baseScore - penalty);
+      // Score selalu minimal 1 — semua orang pasti terhitung
+      const score     = daysSince >= 9999 ? 9999 : Math.max(1, daysSince - penalty);
       return {
         ...u,
-        daysSince:  baseScore,
+        daysSince,
         score,
         count180:   countMap[u.id],
         k6Count:    k6Map[u.id] || 0,
@@ -816,13 +945,12 @@ export default function ScheduleWeeklyPage() {
       };
     }).sort((a, b) => b.score - a.score);
 
-    // Normalisasi relatif — gunakan distribusi yang bermakna
-    // Jika semua score dekat (misal 0-2 hari), tetap tampilkan proporsi
+    // Normalisasi relatif — semua punya persen minimal 1%
     const maxScore = Math.max(...rawScored.map(u => u.score >= 9999 ? 0 : u.score), 1);
     const withPct = rawScored.map((u, i) => {
       const pct = u.score >= 9999 ? 100
-                : maxScore > 0   ? Math.round((u.score / maxScore) * 100)
-                : 0;
+                : maxScore > 0   ? Math.max(1, Math.round((u.score / maxScore) * 100))
+                : 1;
       const tier = u.score >= 9999 ? 'new'
                  : u.score >= 30   ? 'high'
                  : u.score >= 7    ? 'medium'
@@ -1058,10 +1186,19 @@ export default function ScheduleWeeklyPage() {
                     </div>
                     <h3 className="font-bold text-gray-900 text-xl leading-tight">{ev.perayaan || ev.nama_event}</h3>
                     <p className="text-sm text-gray-500 mt-0.5">
-                      Latihan: <strong>{formatDate(ev.tanggal_latihan,'EEEE, dd MMM')}</strong>
-                      {' · '}Misa: Sabtu Sore s/d Minggu <strong>{formatDate(ev.tanggal_tugas,'dd MMM yyyy')}</strong>
+                      {ev.tipe_event === 'Misa_Khusus' ? (
+                        <>Misa: <strong>{formatDate(ev.tanggal_tugas,'EEEE, dd MMM yyyy')}</strong>
+                        {ev.draft_note && ev.draft_note.includes('Jam:') && (
+                          <span className="ml-1 text-xs">· {ev.draft_note.replace('Jam:','').trim()}</span>
+                        )}</>
+                      ) : (
+                        <>
+                          {ev.tanggal_latihan && <>Latihan: <strong>{formatDate(ev.tanggal_latihan,'EEEE, dd MMM')}</strong>{' · '}</>}
+                          Misa: <strong>{formatDate(ev.tanggal_tugas,'EEEE, dd MMM yyyy')}</strong>
+                        </>
+                      )}
                     </p>
-                    <p className="text-xs text-gray-400">{asgn.length} petugas ({PETUGAS_PER_SLOT}/slot)</p>
+                    <p className="text-xs text-gray-400">{asgn.length} petugas · {ev.jumlah_misa || 4} slot</p>
                     {ev.draft_note && <p className="text-xs text-yellow-700 bg-yellow-100 rounded px-2 py-1 mt-1 inline-block">📝 {ev.draft_note}</p>}
                   </div>
                   <div className="flex gap-1 flex-wrap flex-shrink-0">
@@ -1093,69 +1230,98 @@ export default function ScheduleWeeklyPage() {
                   </div>
                 </div>
 
-                {/* Pelatih Piket */}
-                {picOptions.filter(p => {
-                  // Show Pelatih who are PIC in any slot of this event
-                  const pNicks = [1,2,3,4].flatMap(s => [ev[`pic_slot_${s}a`], ev[`pic_slot_${s}b`]]).filter(Boolean);
-                  const pelatihNicks = picOptions.filter(u => u.role === 'Pelatih').map(u => u.nickname);
-                  return pNicks.some(n => pelatihNicks.includes(n)) && pelatihNicks.includes(p.nickname) && pNicks.includes(p.nickname);
-                }).length > 0 && (
-                  <div className="mb-3 p-2 bg-blue-50 rounded-xl border border-blue-100">
-                    <p className="text-xs font-semibold text-blue-700 mb-1">👤 Pelatih Piket</p>
-                    <div className="flex flex-wrap gap-1">
-                      {[1,2,3,4].flatMap(s => [ev[`pic_slot_${s}a`], ev[`pic_slot_${s}b`]]).filter(Boolean)
-                        .filter((n,i,arr) => arr.indexOf(n) === i) // deduplicate
-                        .filter(n => picOptions.find(p => p.nickname === n && p.role === 'Pelatih'))
-                        .map(nick => {
+                {/* Pelatih Piket — tampil jika ada pelatih_slot_1/2/3 */}
+                {(() => {
+                  const pelatihNicks = [ev.pelatih_slot_1, ev.pelatih_slot_2, ev.pelatih_slot_3].filter(Boolean);
+                  if (pelatihNicks.length === 0) return null;
+                  return (
+                    <div className="mb-3 p-2 bg-teal-50 rounded-xl border border-teal-100">
+                      <p className="text-xs font-semibold text-teal-700 mb-1.5">🧑‍🏫 Pelatih Piket</p>
+                      <div className="flex flex-wrap gap-2">
+                        {pelatihNicks.map(nick => {
                           const p = picOptions.find(u => u.nickname === nick);
-                          return <span key={nick} className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-lg font-medium">{p?.nama_panggilan || nick}</span>;
-                        })
-                      }
-                    </div>
-                  </div>
-                )}
-
-                {/* Slot cards */}
-                <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-                  {[1,2,3,4].map(slot => {
-                    const info   = SLOT_INFO[slot];
-                    const picA   = ev[`pic_slot_${slot}a`];
-                    const picB   = ev[`pic_slot_${slot}b`];
-                    const people = bySlot[slot] || [];
-                    return (
-                      <div key={slot} className={`p-3 rounded-xl border ${lc.bg} border-gray-100`}>
-                        <div className="mb-2 pb-2 border-b border-gray-200/70">
-                          <p className="text-xs font-bold text-gray-700">{info.time}</p>
-                          {picA||picB
-                            ? <p className="text-[11px] text-brand-700 flex items-center gap-1 mt-0.5">
-                                <UserCheck size={11}/>PIC: {[picA,picB].filter(Boolean).join(' & ')}
-                              </p>
-                            : <p className="text-[11px] text-red-400 flex items-center gap-1 mt-0.5">
-                                <AlertTriangle size={10}/>PIC belum diisi
-                              </p>
-                          }
-                        </div>
-                        <div className="space-y-0.5">
-                          {people.length === 0
-                            ? <p className="text-xs text-gray-400 italic">Belum ada petugas</p>
-                            : people.map((a,i) => (
-                              <div key={i} className="flex items-center gap-1.5">
-                                <span className="text-[10px] text-gray-400 w-4 text-right shrink-0">{i+1}.</span>
-                                <div>
-                                  <p className="text-xs font-medium text-gray-800 leading-none">{nameTag[a.users?.nickname] || a.users?.nama_panggilan}</p>
-                                  <p className="text-[10px] text-gray-400">{a.users?.pendidikan} · {a.users?.lingkungan}</p>
-                                </div>
-                              </div>
-                            ))
-                          }
-                          {people.length > 0 && people.length < PETUGAS_PER_SLOT && (
-                            <p className="text-[10px] text-orange-400 mt-1">+{PETUGAS_PER_SLOT-people.length} kosong</p>
-                          )}
-                        </div>
+                          const hp = p?.hp_anak || p?.hp_ortu || '';
+                          return (
+                            <div key={nick} className="text-xs bg-teal-100 text-teal-800 px-2 py-1 rounded-lg">
+                              <span className="font-semibold">{p?.nama_panggilan || nick}</span>
+                              {hp && <span className="ml-1 text-teal-600 text-[10px]">· {hp}</span>}
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Slot cards — hanya tampilkan slot sesuai jumlah_misa */}
+                {(() => {
+                  const isMisaKhusus = ev.tipe_event === 'Misa_Khusus';
+                  const nSlots = isMisaKhusus ? (ev.jumlah_misa || 1) : 4;
+                  // Parse jam khusus dari draft_note: "Jam: Slot 1: 07.00 | Slot 2: 09.00"
+                  const jamMap = {};
+                  if (isMisaKhusus && ev.draft_note) {
+                    const matches = ev.draft_note.matchAll(/Slot (\d+): ([\d.]+)/g);
+                    for (const m of matches) jamMap[Number(m[1])] = m[2];
+                  }
+                  const gridClass = nSlots === 1 ? 'grid-cols-1 max-w-xs' : nSlots === 2 ? 'grid-cols-2' : nSlots === 3 ? 'grid-cols-3' : 'grid-cols-2 xl:grid-cols-4';
+                  return (
+                    <div className={`grid ${gridClass} gap-3`}>
+                      {Array.from({length: nSlots}, (_,i) => i+1).map(slot => {
+                        const info   = SLOT_INFO[slot] || SLOT_INFO[1];
+                        const picA   = ev[`pic_slot_${slot}a`];
+                        const picB   = ev[`pic_slot_${slot}b`];
+                        const hpA    = ev[`pic_hp_slot_${slot}a`];
+                        const hpB    = ev[`pic_hp_slot_${slot}b`];
+                        const people = bySlot[slot] || [];
+                        // Label jam: untuk misa khusus pakai jam dari draft_note; mingguan pakai SLOT_INFO
+                        const jamLabel = isMisaKhusus && jamMap[slot]
+                          ? `Misa ${slot} (${jamMap[slot]})`
+                          : info.time;
+                        // Tanggal: slot 1 = tanggal_latihan (sabtu), slot 2+ = tanggal_tugas (minggu)
+                        const tglSlot = !isMisaKhusus && slot === 1 && ev.tanggal_latihan
+                          ? formatDate(ev.tanggal_latihan, 'dd MMM')
+                          : formatDate(ev.tanggal_tugas, 'dd MMM');
+                        return (
+                          <div key={slot} className={`p-3 rounded-xl border ${lc.bg} border-gray-100`}>
+                            <div className="mb-2 pb-2 border-b border-gray-200/70">
+                              <p className="text-xs font-bold text-gray-700">{jamLabel}</p>
+                              {!isMisaKhusus && <p className="text-[10px] text-gray-400">{tglSlot}</p>}
+                              {picA||picB ? (
+                                <div className="mt-0.5">
+                                  <p className="text-[11px] text-brand-700 flex items-center gap-1">
+                                    <UserCheck size={11}/>PIC: {[picA,picB].filter(Boolean).join(' & ')}
+                                  </p>
+                                  {hpA && <p className="text-[10px] text-gray-400 ml-3.5">📱 {hpA}</p>}
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-red-400 flex items-center gap-1 mt-0.5">
+                                  <AlertTriangle size={10}/>PIC belum diisi
+                                </p>
+                              )}
+                            </div>
+                            <div className="space-y-0.5">
+                              {people.length === 0
+                                ? <p className="text-xs text-gray-400 italic">Belum ada petugas</p>
+                                : people.map((a,i) => (
+                                  <div key={i} className="flex items-center gap-1.5">
+                                    <span className="text-[10px] text-gray-400 w-4 text-right shrink-0">{i+1}.</span>
+                                    <div>
+                                      <p className="text-xs font-medium text-gray-800 leading-none">{nameTag[a.users?.nickname] || a.users?.nama_panggilan}</p>
+                                      <p className="text-[10px] text-gray-400">{a.users?.pendidikan} · {a.users?.lingkungan}</p>
+                                    </div>
+                                  </div>
+                                ))
+                              }
+                              {people.length > 0 && people.length < PETUGAS_PER_SLOT && (
+                                <p className="text-[10px] text-orange-400 mt-1">+{PETUGAS_PER_SLOT-people.length} kosong</p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
@@ -1214,7 +1380,11 @@ export default function ScheduleWeeklyPage() {
                 placeholder="Catatan sebelum publish..."
                 onChange={e=>setEditEvent(v=>({...v, draft_note:e.target.value}))}/>
             </div>
-            <div className="flex gap-2">
+
+            {/* Edit Petugas per Slot */}
+            <EditPetugasSection ev={editEvent} onSaved={()=>{setEditEvent(null);loadEvents();}}/>
+
+            <div className="flex gap-2 mt-4">
               <button onClick={saveEditEvent} className="btn-primary flex-1 gap-2"><Check size={16}/> Simpan</button>
               <button onClick={()=>setEditEvent(null)} className="btn-secondary">Batal</button>
             </div>
