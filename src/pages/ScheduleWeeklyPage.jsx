@@ -19,6 +19,24 @@ const SLOT_INFO = {
   4: { time: 'Minggu 17:30', label: 'Minggu Sore',   jam: '17.30' },
 };
 const MONTHS         = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+
+// Parse draft_note untuk Misa_Khusus: "Slot 1: 07.00|2026-04-02 | Slot 2: 09.00|2026-04-03"
+// Returns: [{ slot:1, jam:'07.00', tanggal:'2026-04-02' }, ...]
+// Backward-compat: juga handle format lama "Slot 1: 07.00 | Slot 2: 09.00" tanpa tanggal
+function parseSlotSchedule(draftNote, fallbackTanggal) {
+  if (!draftNote) return [];
+  const raw = draftNote.replace(/^Jam:\s*/i, '');
+  return raw.split('|').map(part => {
+    // Handle " | Slot N: jam|tanggal" splits
+    const m = part.trim().match(/Slot\s+(\d+):\s*([\d.]+)(?:\|(\d{4}-\d{2}-\d{2}))?/i);
+    if (!m) return null;
+    return {
+      slot:    Number(m[1]),
+      jam:     m[2] || '07.00',
+      tanggal: m[3] || fallbackTanggal || '',
+    };
+  }).filter(Boolean);
+}
 const MONTHS_UPPER   = MONTHS.map(m => m.toUpperCase());
 const WARNA_OPTIONS  = ['Hijau','Merah','Putih','Ungu','MerahMuda','Hitam'];
 const PETUGAS_PER_SLOT = 8; // petugas per slot/misa
@@ -120,14 +138,9 @@ function parseLiturgiHTML(html, year) {
 // ─── Export PNG template (format tabel seperti contoh) ─────────────────────
 function buildExportHTML(ev, assignments, pelatihOptions = []) {
   const isMisaKhusus = ev.tipe_event === 'Misa_Khusus';
-  const nSlots = isMisaKhusus ? (ev.jumlah_misa || 1) : 4;
-
-  // Parse jam khusus dari draft_note
-  const jamMap = {};
-  if (isMisaKhusus && ev.draft_note) {
-    const matches = ev.draft_note.matchAll(/Slot (\d+): ([\d.]+)/g);
-    for (const m of matches) jamMap[Number(m[1])] = m[2];
-  }
+  // Parse slot schedule dari draft_note (tanggal+jam per slot)
+  const schedule = isMisaKhusus ? parseSlotSchedule(ev.draft_note, ev.tanggal_tugas) : [];
+  const nSlots   = isMisaKhusus ? Math.max(ev.jumlah_misa || 1, schedule.length) : 4;
 
   const bySlot = {};
   for (let s = 1; s <= nSlots; s++) bySlot[s] = assignments.filter(a => a.slot_number === s);
@@ -142,12 +155,19 @@ function buildExportHTML(ev, assignments, pelatihOptions = []) {
     return `${HARI_UPPER[dt.getDay()]} ${d} ${MONTHS_UPPER[mo - 1]} ${y}`;
   }
 
-  // Subtitle: untuk misa khusus tampilkan hari tugas yang benar
-  const subtitleTgl = isMisaKhusus
-    ? fmtTglIndo(ev.tanggal_tugas)
-    : ev.tanggal_latihan
+  // No 4: Subtitle menampilkan rentang tanggal semua misa
+  let subtitleTgl;
+  if (isMisaKhusus) {
+    const firstTgl = schedule[0]?.tanggal || ev.tanggal_tugas;
+    const lastTgl  = ev.tanggal_tugas;
+    subtitleTgl = firstTgl === lastTgl
+      ? fmtTglIndo(lastTgl)
+      : `${fmtTglIndo(firstTgl)} — ${fmtTglIndo(lastTgl)}`;
+  } else {
+    subtitleTgl = ev.tanggal_latihan
       ? `${fmtTglIndo(ev.tanggal_latihan)} s/d ${fmtTglIndo(ev.tanggal_tugas)}`
       : fmtTglIndo(ev.tanggal_tugas);
+  }
 
   let rows = '';
   for (let slot = 1; slot <= nSlots; slot++) {
@@ -156,18 +176,18 @@ function buildExportHTML(ev, assignments, pelatihOptions = []) {
     const picA    = ev[`pic_slot_${slot}a`] || '—';
     const picB    = ev[`pic_slot_${slot}b`] || '—';
     const hpA     = ev[`pic_hp_slot_${slot}a`] || '';
-    const hpB     = ev[`pic_hp_slot_${slot}b`] || '';
-    // Tanggal per slot: misa khusus semua = tanggal_tugas; mingguan slot1 = sabtu
+    // No 2: Tanggal per slot dari schedule
+    const sc      = schedule.find(s => s.slot === slot);
     const tglSlot = isMisaKhusus
-      ? fmtTglIndo(ev.tanggal_tugas)
+      ? fmtTglIndo(sc?.tanggal || ev.tanggal_tugas)
       : (slot === 1 && ev.tanggal_latihan ? fmtTglIndo(ev.tanggal_latihan) : fmtTglIndo(ev.tanggal_tugas));
     const rowspan = Math.max(people.length, 1);
 
-    // Label jam: misa khusus pakai jam dari draft_note
-    const jamLabel = isMisaKhusus && jamMap[slot]
-      ? `MISA ${slot} (${jamMap[slot]})`
+    const jamLabel = isMisaKhusus
+      ? `MISA ${slot} (${sc?.jam || '07.00'})`
       : info.label.toUpperCase();
-
+    const jamRow  = isMisaKhusus ? '' : `JAM (${sc?.jam || info.jam})<br>`;
+    // No 6: HP PIC tampil di PNG
     const hp = hpA ? `HP PIC: ${hpA}` : '';
 
     const tanggalCell = `
@@ -177,7 +197,7 @@ function buildExportHTML(ev, assignments, pelatihOptions = []) {
         min-width:160px; background:#f9f9f9;">
         ${jamLabel}<br>
         ${tglSlot}<br>
-        ${isMisaKhusus ? '' : `JAM (${jamMap[slot] || info.jam})<br>`}
+        ${jamRow}
         PIC: ${picA.toUpperCase()}${picB !== '—' ? ' &amp; ' + picB.toUpperCase() : ''}<br>
         <span style="font-weight:normal;font-size:10px;color:#555;">${hp}</span>
       </td>`;
@@ -291,17 +311,14 @@ export default function ScheduleWeeklyPage() {
   const [showAddMisa, setShowAddMisa] = useState(false);
   const INIT_MISA_FORM = {
     tipe:            'Misa_Khusus',  // 'Misa_Khusus' | 'Mingguan_HariRaya'
-    tanggal_tugas:   '',
-    tanggal_latihan: '',
+    tanggal_tugas:   '',             // tanggal misa terakhir (H-day)
+    tanggal_latihan: '',             // untuk Mingguan_HariRaya: tanggal Sabtu latihan
     perayaan:        '',
     warna_liturgi:   'Putih',
     jumlah_misa:     1,
-    // Jam per slot (bisa lebih dari 1 untuk Misa_Khusus)
-    slot_times:      ['07.00'],      // array jam string sesuai jumlah slot
-    // Misa Vigili: misa malam sebelumnya
-    ada_vigili:      false,
-    vigili_jam:      '17.30',        // jam misa vigili (default sore)
-    // tanggal_tugas adalah hari utama, vigili = tanggal_tugas - 1 hari
+    // Jam dan tanggal per slot (Misa_Khusus)
+    // slot_schedule[i] = { tanggal: 'YYYY-MM-DD', jam: 'HH.mm' }
+    slot_schedule:   [{ tanggal: '', jam: '07.00' }],
   };
   const [addMisaForm, setAddMisaForm] = useState({...INIT_MISA_FORM});
 
@@ -465,57 +482,41 @@ export default function ScheduleWeeklyPage() {
 
     const isMingguanHariRaya = f.tipe === 'Mingguan_HariRaya';
 
-    // Susun nama event dengan jam jika ada
-    const jamStr = !isMingguanHariRaya && f.slot_times?.length
-      ? ` (${f.slot_times.filter(Boolean).join(', ')})`
-      : '';
+    let draftNote = null;
+    let tanggalLatihan = isMingguanHariRaya ? f.tanggal_latihan : null;
 
-    // Untuk Misa_Khusus: draft_note berisi info jam tiap slot
-    const draftNote = !isMingguanHariRaya && f.slot_times?.length
-      ? `Jam: ${f.slot_times.map((j,i) => `Slot ${i+1}: ${j}`).join(' | ')}`
-      : '';
+    if (!isMingguanHariRaya) {
+      // Encode slot_schedule ke draft_note: "Slot 1: HH.mm|YYYY-MM-DD | Slot 2: ..."
+      // Jika slot tanggal kosong, gunakan tanggal_tugas sebagai fallback
+      const schedule = (f.slot_schedule || [{ tanggal: f.tanggal_tugas, jam: '07.00' }]);
+      const parts = schedule.map((s, i) => {
+        const tgl = s.tanggal || f.tanggal_tugas;
+        return `Slot ${i+1}: ${s.jam || '07.00'}|${tgl}`;
+      });
+      draftNote = `Jam: ${parts.join(' | ')}`;
 
-    // Insert event utama
-    const { data: ev, error } = await supabase.from('events').insert({
-      nama_event:        (f.perayaan + jamStr).toUpperCase(),
+      // tanggal_latihan = tanggal slot pertama (H-1 atau sama)
+      // Ini dipakai untuk display subtitle dan slot date di card
+      tanggalLatihan = schedule[0]?.tanggal || f.tanggal_tugas;
+    }
+
+    const { error } = await supabase.from('events').insert({
+      nama_event:        f.perayaan.toUpperCase(),
       tipe_event:        isMingguanHariRaya ? 'Mingguan' : 'Misa_Khusus',
       tanggal_tugas:     f.tanggal_tugas,
-      tanggal_latihan:   isMingguanHariRaya ? f.tanggal_latihan : null,
+      tanggal_latihan:   tanggalLatihan,
       perayaan:          f.perayaan,
       warna_liturgi:     f.warna_liturgi,
-      jumlah_misa:       isMingguanHariRaya ? 4 : f.jumlah_misa,
+      jumlah_misa:       isMingguanHariRaya ? 4 : (f.slot_schedule?.length || 1),
       status_event:      'Akan_Datang',
       is_draft:          true,
       gcatholic_fetched: false,
-      draft_note:        draftNote || null,
-    }).select().single();
+      draft_note:        draftNote,
+    });
 
     if (error) { toast.error('Gagal tambah: ' + error.message); return; }
 
-    // Jika ada Misa Vigili: buat event terpisah untuk H-1
-    if (!isMingguanHariRaya && f.ada_vigili && f.vigili_jam) {
-      // Hitung tanggal vigili = tanggal_tugas - 1 hari
-      const [vy, vm, vd] = f.tanggal_tugas.split('-').map(Number);
-      const vigiliDate   = new Date(vy, vm - 1, vd - 1);
-      const vigiliStr    = `${vigiliDate.getFullYear()}-${String(vigiliDate.getMonth()+1).padStart(2,'0')}-${String(vigiliDate.getDate()).padStart(2,'0')}`;
-
-      await supabase.from('events').insert({
-        nama_event:        `MISA VIGILI — ${f.perayaan.toUpperCase()} (${f.vigili_jam})`,
-        tipe_event:        'Misa_Khusus',
-        tanggal_tugas:     vigiliStr,
-        tanggal_latihan:   null,
-        perayaan:          `Misa Vigili — ${f.perayaan}`,
-        warna_liturgi:     f.warna_liturgi,
-        jumlah_misa:       1,
-        status_event:      'Akan_Datang',
-        is_draft:          true,
-        gcatholic_fetched: false,
-        draft_note:        `Vigili H-1. Jam: ${f.vigili_jam}`,
-      });
-    }
-
-    const vigiliInfo = (!isMingguanHariRaya && f.ada_vigili) ? ' + Misa Vigili H-1' : '';
-    toast.success(`"${f.perayaan}"${vigiliInfo} berhasil ditambahkan sebagai DRAFT!`);
+    toast.success(`"${f.perayaan}" berhasil ditambahkan sebagai DRAFT!`);
     setShowAddMisa(false);
     setAddMisaForm({...INIT_MISA_FORM});
     loadEvents();
@@ -727,10 +728,12 @@ export default function ScheduleWeeklyPage() {
     );
   }
 
-  // ── EditPetugasSection: tambah/hapus petugas di edit modal ───
+  // ── EditPetugasSection: searchable dropdown checklist per slot ───
   function EditPetugasSection({ ev, onSaved }) {
     const [members, setMembers] = React.useState([]);
-    const [assigns, setAssigns] = React.useState({}); // { slot: [userId,...] }
+    const [assigns, setAssigns] = React.useState({});
+    const [search,  setSearch]  = React.useState({});   // {slot: queryString}
+    const [open,    setOpen]    = React.useState({});   // {slot: bool}
     const [saving,  setSaving]  = React.useState(false);
     const [loaded,  setLoaded]  = React.useState(false);
 
@@ -768,9 +771,7 @@ export default function ScheduleWeeklyPage() {
 
     async function savePetugas() {
       setSaving(true);
-      // Hapus semua assignments lama
       await supabase.from('assignments').delete().eq('event_id', ev.id);
-      // Insert baru
       const rows = [];
       for (let s = 1; s <= nSlots; s++) {
         (assigns[s] || []).forEach((uid, i) => {
@@ -795,29 +796,83 @@ export default function ScheduleWeeklyPage() {
         {Array.from({length: nSlots}, (_,i) => i+1).map(slot => {
           const info     = SLOT_INFO[slot] || SLOT_INFO[1];
           const selected = assigns[slot] || [];
+          const q        = (search[slot] || '').toLowerCase();
+          const filtered = members.filter(m =>
+            m.nama_panggilan?.toLowerCase().includes(q) ||
+            m.nickname?.toLowerCase().includes(q) ||
+            m.lingkungan?.toLowerCase().includes(q)
+          );
+          const isOpen = !!open[slot];
           return (
             <div key={slot} className="mb-3">
-              <p className="text-xs font-bold text-gray-600 mb-1.5">
-                {info.time} — {selected.length} dipilih
-              </p>
-              <div className="grid grid-cols-2 gap-1 max-h-48 overflow-y-auto pr-1">
-                {members.map(m => {
-                  const isSelected = selected.includes(m.id);
-                  return (
-                    <button key={m.id} type="button"
-                      onClick={() => toggleMember(slot, m.id)}
-                      className={`text-left text-xs px-2 py-1.5 rounded-lg border flex items-center gap-1.5 transition-colors
-                        ${isSelected ? 'bg-green-50 border-green-300 text-green-800' : 'bg-white border-gray-200 hover:bg-gray-50 text-gray-700'}`}>
-                      <span className={`w-3.5 h-3.5 rounded flex items-center justify-center shrink-0
-                        ${isSelected ? 'bg-green-500' : 'border border-gray-300'}`}>
-                        {isSelected && <Check size={9} className="text-white"/>}
-                      </span>
-                      <span className="truncate">{m.nama_panggilan}</span>
-                      <span className="text-gray-400 text-[10px] ml-auto shrink-0">{m.pendidikan}</span>
-                    </button>
-                  );
-                })}
-              </div>
+              {/* Trigger button */}
+              <button type="button"
+                onClick={() => setOpen(p => ({...p, [slot]: !p[slot]}))}
+                className="w-full flex items-center justify-between text-left px-3 py-2 rounded-xl border border-gray-200 hover:border-brand-800 transition-colors">
+                <span className="text-xs font-bold text-gray-700">{info.time}</span>
+                <span className="text-xs text-gray-500">{selected.length} dipilih ▾</span>
+              </button>
+
+              {/* Selected chips */}
+              {selected.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1.5 px-1">
+                  {selected.map(uid => {
+                    const m = members.find(x => x.id === uid);
+                    return m ? (
+                      <button key={uid} type="button"
+                        onClick={() => toggleMember(slot, uid)}
+                        className="text-[10px] bg-green-100 text-green-800 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-red-100 hover:text-red-700 transition-colors">
+                        {m.nama_panggilan} ×
+                      </button>
+                    ) : null;
+                  })}
+                </div>
+              )}
+
+              {/* Dropdown */}
+              {isOpen && (
+                <div className="mt-1 border border-gray-200 rounded-xl overflow-hidden shadow-lg bg-white z-20 relative">
+                  {/* Search */}
+                  <div className="p-2 border-b border-gray-100">
+                    <input autoFocus
+                      type="text"
+                      className="input text-sm py-1.5"
+                      placeholder="Cari nama, lingkungan…"
+                      value={search[slot] || ''}
+                      onChange={e => setSearch(p => ({...p, [slot]: e.target.value}))}
+                    />
+                  </div>
+                  {/* List */}
+                  <div className="max-h-52 overflow-y-auto">
+                    {filtered.length === 0 && (
+                      <p className="text-xs text-gray-400 text-center py-3">Tidak ditemukan</p>
+                    )}
+                    {filtered.map(m => {
+                      const isSel = selected.includes(m.id);
+                      return (
+                        <button key={m.id} type="button"
+                          onClick={() => toggleMember(slot, m.id)}
+                          className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0
+                            ${isSel ? 'bg-green-50' : ''}`}>
+                          <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0
+                            ${isSel ? 'bg-green-500 border-green-500' : 'border-gray-300'}`}>
+                            {isSel && <Check size={10} className="text-white"/>}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-medium text-gray-800 truncate">{m.nama_panggilan}</p>
+                            <p className="text-[10px] text-gray-400">{m.pendidikan} · {m.lingkungan}</p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="p-2 border-t border-gray-100">
+                    <button type="button"
+                      onClick={() => setOpen(p => ({...p, [slot]: false}))}
+                      className="btn-outline btn-sm w-full text-xs">Tutup</button>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -873,75 +928,62 @@ export default function ScheduleWeeklyPage() {
       }
     });
 
-    // ── Scoring logic ──────────────────────────────────────────────────────
-    // Skor dasar = hari sejak assignment terakhir dibuat (created_at)
-    // Bonus/Penalti dari rekap kehadiran 180 hari terakhir:
-    //   Setiap K6 (absen tanpa ijin) = -5 hari bonus (orang paling sering absen
-    //   naik prioritas lebih lambat — "reward yang hadir")
-    //   Setiap K5 (hadir latihan saja) = -2 hari (sudah ada effort)
-    // Belum pernah dijadwalkan = 9999
+    // ── Scoring logic: pakai rekap_poin_mingguan K1-K6 ─────────────────
+    // Skor dasar = hari sejak assignment terakhir
+    // Bonus dari kondisi baik (K1 +3, K2 +5, K3 +1, K4 +1)
+    // Penalti dari kondisi buruk (K5 -2, K6 -10)
+    // Sumber: rekap_poin_mingguan 30 hari terakhir
 
-    // Ambil rekap K5/K6 per user — 30 hari terakhir yang VALID (tanggal_tugas sudah lewat)
     const since30   = new Date(now - 30*24*3600*1000).toISOString().split('T')[0];
     const todayStr2 = now.toISOString().split('T')[0];
-    const { data: recentScans } = await supabase.from('scan_records')
-      .select('user_id, scan_type, event_id, timestamp')
-      .gte('timestamp', since30 + 'T00:00:00');
-    // Only past events (tanggal_tugas <= today) - future events don't count as absen
-    const { data: recentAssigns } = await supabase.from('assignments')
-      .select('user_id, event_id, events(tanggal_tugas)')
-      .gte('events.tanggal_tugas', since30)
-      .lte('events.tanggal_tugas', todayStr2);
 
-    // Compute K5/K6 counts per user (simple version)
-    const k6Map = {}, k5Map = {};
-    pool.forEach(u => { k6Map[u.id] = 0; k5Map[u.id] = 0; });
-    const scansByUser = {};
-    pool.forEach(u => { scansByUser[u.id] = { tugas: false, latihan: false }; });
+    // Ambil rekap K1-K6 per user dari rekap_poin_mingguan
+    const { data: recentRekap } = await supabase
+      .from('rekap_poin_mingguan')
+      .select('user_id, kondisi, poin')
+      .gte('week_start', since30)
+      .lte('week_start', todayStr2);
 
-    // Group scans by user+week
-    const assignsByUser = {};
-    pool.forEach(u => { assignsByUser[u.id] = new Set(); });
-    (recentAssigns||[]).filter(a=>a.events).forEach(a => {
-      if (assignsByUser[a.user_id]) assignsByUser[a.user_id].add(a.event_id);
+    // Hitung bonus/penalti per kondisi
+    const KONDISI_DELTA = { K1: +3, K2: +5, K3: +1, K4: +1, K5: -2, K6: -10 };
+    const kondisiBonus = {};
+    const kondisiCount = {};
+    pool.forEach(u => { kondisiBonus[u.id] = 0; kondisiCount[u.id] = {}; });
+
+    (recentRekap || []).forEach(r => {
+      if (kondisiBonus[r.user_id] === undefined) return;
+      const delta = KONDISI_DELTA[r.kondisi] || 0;
+      kondisiBonus[r.user_id] += delta;
+      kondisiCount[r.user_id][r.kondisi] = (kondisiCount[r.user_id][r.kondisi] || 0) + 1;
     });
 
-    // Simple absen check: assigned but no tugas scan
-    (pool).forEach(u => {
-      const assigned = assignsByUser[u.id];
-      const userScans = (recentScans||[]).filter(s => s.user_id === u.id);
-      const scanEventIds = new Set(userScans.filter(s=>s.scan_type==='tugas'||s.scan_type==='walkin_tugas').map(s=>s.event_id).filter(Boolean));
-      const latihanEventIds = new Set(userScans.filter(s=>s.scan_type==='latihan'||s.scan_type==='walkin_latihan').map(s=>s.event_id).filter(Boolean));
-      assigned.forEach(eid => {
-        if (!scanEventIds.has(eid)) {
-          if (latihanEventIds.has(eid)) k5Map[u.id]++;  // K5: hadir latihan tapi absen tugas
-          else k6Map[u.id]++;                            // K6: absen total
-        }
-      });
+    // Alias untuk display
+    const k6Map = {}, k5Map = {};
+    pool.forEach(u => {
+      k6Map[u.id] = kondisiCount[u.id]?.K6 || 0;
+      k5Map[u.id] = kondisiCount[u.id]?.K5 || 0;
     });
 
     // ── Skor prioritas: selalu minimal 1, dihitung dari 30 hari lalu ──────
-    // baseScore = hari sejak tugas terakhir (minimal 1 hari, bukan 0)
-    // Jika belum pernah: baseScore = 9999 (prioritas tertinggi)
-    // Penalti K6 (absen total) = -5 hari, K5 (latihan saja) = -2 hari
-    // Score akhir selalu >= 1 (semua pasti punya prioritas)
+    // Skor = hari sejak tugas terakhir + bonus/penalti dari K1-K6
+    // K1 +3, K2 +5, K3 +1, K4 +1, K5 -2, K6 -10 | Minimal 1 selalu
     const rawScored = pool.map(u => {
       const lc        = lastCreated[u.id];
       const daysSince = lc
         ? Math.max(1, Math.floor((now - new Date(lc)) / 86400000))
         : 9999;
-      const penalty   = (k6Map[u.id] || 0) * 5 + (k5Map[u.id] || 0) * 2;
-      // Score selalu minimal 1 — semua orang pasti terhitung
-      const score     = daysSince >= 9999 ? 9999 : Math.max(1, daysSince - penalty);
+      const bonus = kondisiBonus[u.id] || 0;
+      const score = daysSince >= 9999 ? 9999 : Math.max(1, daysSince + bonus);
       return {
         ...u,
         daysSince,
         score,
-        count180:   countMap[u.id],
-        k6Count:    k6Map[u.id] || 0,
-        k5Count:    k5Map[u.id] || 0,
-        penalty,
-        lastDate:   lastEventDate[u.id],
+        count180:     countMap[u.id],
+        k6Count:      k6Map[u.id] || 0,
+        k5Count:      k5Map[u.id] || 0,
+        kondisiCount: kondisiCount[u.id] || {},
+        bonus,
+        lastDate:     lastEventDate[u.id],
       };
     }).sort((a, b) => b.score - a.score);
 
@@ -1160,18 +1202,88 @@ export default function ScheduleWeeklyPage() {
         </div>
       ) : (
         <div className="space-y-6">
-          {events.map(ev => {
-            const lc   = getLiturgyClass(ev.warna_liturgi);
-            const asgn = ev.assignments || [];
-            const bySlot = {};
-            for (let s=1;s<=4;s++) bySlot[s] = asgn.filter(a=>a.slot_number===s);
-            // Disambiguasi nama panggilan yang sama dalam event ini
-            const nameTag = tagDuplicateNames(
-              asgn.map(a => a.users).filter(Boolean).map(u => ({ ...u, id: u.nickname || '' }))
+          {/* Kelompokkan vigili dengan event utamanya */}
+          {(() => {
+            // Pisahkan vigili dan non-vigili
+            const vigiliEvents = events.filter(e =>
+              e.tipe_event === 'Misa_Khusus' &&
+              (e.perayaan?.toLowerCase().startsWith('misa vigili') || e.draft_note?.toLowerCase().includes('vigili h-1'))
+            );
+            const mainEvents = events.filter(e =>
+              !(e.tipe_event === 'Misa_Khusus' &&
+                (e.perayaan?.toLowerCase().startsWith('misa vigili') || e.draft_note?.toLowerCase().includes('vigili h-1')))
             );
 
-            return (
+            return mainEvents.map(ev => {
+              // Cari vigili yang tanggal_tugas-nya = tanggal_tugas ev - 1 hari
+              const [ey, em, ed] = ev.tanggal_tugas?.split('-').map(Number) || [0,0,0];
+              const dayBefore = ey ? `${ey}-${String(em).padStart(2,'0')}-${String(ed-1).padStart(2,'0')}` : null;
+              // Cari juga dengan nama event
+              const vigili = vigiliEvents.find(v =>
+                v.tanggal_tugas === dayBefore ||
+                v.perayaan?.toLowerCase().includes(ev.perayaan?.toLowerCase().replace(/misa vigili — ?/i,'').slice(0,10))
+              ) || null;
+
+              const lc   = getLiturgyClass(ev.warna_liturgi);
+              const asgn = ev.assignments || [];
+              const bySlot = {};
+              for (let s=1;s<=4;s++) bySlot[s] = asgn.filter(a=>a.slot_number===s);
+              const nameTag = tagDuplicateNames(
+                asgn.map(a => a.users).filter(Boolean).map(u => ({ ...u, id: u.nickname || '' }))
+              );
+
+              return (
               <div key={ev.id} className={`card border-l-4 ${ev.is_draft?'border-yellow-400 bg-yellow-50/20':'border-green-400'}`}>
+                {/* Vigili sub-section — tampil di atas slot utama */}
+                {vigili && (() => {
+                  const va   = vigili.assignments || [];
+                  const vPicA = vigili.pic_slot_1a;
+                  const vPicB = vigili.pic_slot_1b;
+                  const vHpA  = vigili.pic_hp_slot_1a;
+                  const vJam  = vigili.draft_note?.match(/Jam: ([\d.]+)/)?.[1] || vigili.vigili_jam || '17.30';
+                  const vTgl  = formatDate(vigili.tanggal_tugas, 'EEEE, dd MMM yyyy');
+                  return (
+                    <div className="mb-4 pb-4 border-b-2 border-dashed border-purple-200 bg-purple-50/40 -mx-4 -mt-4 px-4 pt-4 rounded-t-xl">
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="badge badge-purple text-xs">🕯️ Vigili H-1</span>
+                          {vigili.is_draft
+                            ? <span className="badge-yellow text-xs gap-1 flex items-center"><FileEdit size={10}/>Draft</span>
+                            : <span className="badge-green text-xs gap-1 flex items-center"><Globe size={10}/>Published</span>
+                          }
+                        </div>
+                        <div className="flex gap-1">
+                          <button onClick={()=>setEditEvent({...vigili})} className="btn-outline btn-sm gap-1 text-xs py-1"><Edit2 size={11}/> Edit</button>
+                          {vigili.is_draft
+                            ? <button onClick={()=>publishEvent(vigili)} className="btn-primary btn-sm text-xs py-1"><Globe size={11}/> Publish</button>
+                            : <button onClick={()=>unpublishEvent(vigili)} className="btn-outline btn-sm text-xs py-1"><Lock size={11}/> Draft</button>
+                          }
+                          <button onClick={()=>exportPNG(vigili)} className="btn-outline btn-sm text-xs py-1"><Download size={11}/></button>
+                          <button onClick={()=>setDeleteConf(vigili)} className="btn-ghost p-1 text-red-400 hover:bg-red-50"><Trash2 size={13}/></button>
+                        </div>
+                      </div>
+                      <p className="text-xs font-semibold text-purple-800 mb-0.5">
+                        Misa Vigili — {vTgl} · Jam {vJam}
+                      </p>
+                      {(vPicA || vPicB) && (
+                        <p className="text-[11px] text-purple-600 flex items-center gap-1 mb-2">
+                          <UserCheck size={10}/>PIC: {[vPicA,vPicB].filter(Boolean).join(' & ')}
+                          {vHpA && <span className="text-purple-400">· 📱 {vHpA}</span>}
+                        </p>
+                      )}
+                      {va.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {va.map((a,i) => (
+                            <span key={i} className="text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded-full">
+                              {a.users?.nama_panggilan}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {va.length === 0 && <p className="text-xs text-purple-400 italic">Belum ada petugas vigili</p>}
+                    </div>
+                  );
+                })()}
 
                 {/* Header event */}
                 <div className="flex items-start justify-between gap-3 mb-4">
@@ -1185,18 +1297,26 @@ export default function ScheduleWeeklyPage() {
                       }
                     </div>
                     <h3 className="font-bold text-gray-900 text-xl leading-tight">{ev.perayaan || ev.nama_event}</h3>
+                    {/* No 4: Subtitle dates */}
                     <p className="text-sm text-gray-500 mt-0.5">
-                      {ev.tipe_event === 'Misa_Khusus' ? (
-                        <>Misa: <strong>{formatDate(ev.tanggal_tugas,'EEEE, dd MMM yyyy')}</strong>
-                        {ev.draft_note && ev.draft_note.includes('Jam:') && (
-                          <span className="ml-1 text-xs">· {ev.draft_note.replace('Jam:','').trim()}</span>
-                        )}</>
-                      ) : (
-                        <>
-                          {ev.tanggal_latihan && <>Latihan: <strong>{formatDate(ev.tanggal_latihan,'EEEE, dd MMM')}</strong>{' · '}</>}
-                          Misa: <strong>{formatDate(ev.tanggal_tugas,'EEEE, dd MMM yyyy')}</strong>
-                        </>
-                      )}
+                      {(() => {
+                        if (ev.tipe_event === 'Misa_Khusus') {
+                          const sc = parseSlotSchedule(ev.draft_note, ev.tanggal_tugas);
+                          const firstTgl = sc[0]?.tanggal || ev.tanggal_tugas;
+                          const lastTgl  = ev.tanggal_tugas;
+                          const sameDay  = firstTgl === lastTgl;
+                          return sameDay
+                            ? <strong>{formatDate(lastTgl,'EEEE, dd MMM yyyy')}</strong>
+                            : <><strong>{formatDate(firstTgl,'EEE, dd MMM')}</strong>{' — '}<strong>{formatDate(lastTgl,'EEE, dd MMM yyyy')}</strong></>;
+                        }
+                        // Mingguan: Sabtu tanggal — Minggu tanggal
+                        return <>
+                          {ev.tanggal_latihan
+                            ? <><strong>{formatDate(ev.tanggal_latihan,'EEE, dd MMM')}</strong>{' — '}</>
+                            : null}
+                          <strong>{formatDate(ev.tanggal_tugas,'EEE, dd MMM yyyy')}</strong>
+                        </>;
+                      })()}
                     </p>
                     <p className="text-xs text-gray-400">{asgn.length} petugas · {ev.jumlah_misa || 4} slot</p>
                     {ev.draft_note && <p className="text-xs text-yellow-700 bg-yellow-100 rounded px-2 py-1 mt-1 inline-block">📝 {ev.draft_note}</p>}
@@ -1230,64 +1350,43 @@ export default function ScheduleWeeklyPage() {
                   </div>
                 </div>
 
-                {/* Pelatih Piket — tampil jika ada pelatih_slot_1/2/3 */}
-                {(() => {
-                  const pelatihNicks = [ev.pelatih_slot_1, ev.pelatih_slot_2, ev.pelatih_slot_3].filter(Boolean);
-                  if (pelatihNicks.length === 0) return null;
-                  return (
-                    <div className="mb-3 p-2 bg-teal-50 rounded-xl border border-teal-100">
-                      <p className="text-xs font-semibold text-teal-700 mb-1.5">🧑‍🏫 Pelatih Piket</p>
-                      <div className="flex flex-wrap gap-2">
-                        {pelatihNicks.map(nick => {
-                          const p = picOptions.find(u => u.nickname === nick);
-                          const hp = p?.hp_anak || p?.hp_ortu || '';
-                          return (
-                            <div key={nick} className="text-xs bg-teal-100 text-teal-800 px-2 py-1 rounded-lg">
-                              <span className="font-semibold">{p?.nama_panggilan || nick}</span>
-                              {hp && <span className="ml-1 text-teal-600 text-[10px]">· {hp}</span>}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })()}
 
-                {/* Slot cards — hanya tampilkan slot sesuai jumlah_misa */}
+
+                {/* Slot cards — No 2: tanggal per slot, No 5: pelatih bawah, No 6: HP PIC */}
                 {(() => {
                   const isMisaKhusus = ev.tipe_event === 'Misa_Khusus';
-                  const nSlots = isMisaKhusus ? (ev.jumlah_misa || 1) : 4;
-                  // Parse jam khusus dari draft_note: "Jam: Slot 1: 07.00 | Slot 2: 09.00"
-                  const jamMap = {};
-                  if (isMisaKhusus && ev.draft_note) {
-                    const matches = ev.draft_note.matchAll(/Slot (\d+): ([\d.]+)/g);
-                    for (const m of matches) jamMap[Number(m[1])] = m[2];
-                  }
-                  const gridClass = nSlots === 1 ? 'grid-cols-1 max-w-xs' : nSlots === 2 ? 'grid-cols-2' : nSlots === 3 ? 'grid-cols-3' : 'grid-cols-2 xl:grid-cols-4';
+                  const schedule = isMisaKhusus
+                    ? parseSlotSchedule(ev.draft_note, ev.tanggal_tugas)
+                    : [];
+                  const nSlots = isMisaKhusus
+                    ? Math.max(ev.jumlah_misa || 1, schedule.length || 1)
+                    : 4;
+                  const gridClass = nSlots === 1 ? 'grid-cols-1 max-w-sm' : nSlots === 2 ? 'grid-cols-2' : nSlots === 3 ? 'grid-cols-3' : 'grid-cols-2 xl:grid-cols-4';
                   return (
                     <div className={`grid ${gridClass} gap-3`}>
                       {Array.from({length: nSlots}, (_,i) => i+1).map(slot => {
-                        const info   = SLOT_INFO[slot] || SLOT_INFO[1];
-                        const picA   = ev[`pic_slot_${slot}a`];
-                        const picB   = ev[`pic_slot_${slot}b`];
-                        const hpA    = ev[`pic_hp_slot_${slot}a`];
-                        const hpB    = ev[`pic_hp_slot_${slot}b`];
-                        const people = bySlot[slot] || [];
-                        // Label jam: untuk misa khusus pakai jam dari draft_note; mingguan pakai SLOT_INFO
-                        const jamLabel = isMisaKhusus && jamMap[slot]
-                          ? `Misa ${slot} (${jamMap[slot]})`
+                        const info    = SLOT_INFO[slot] || SLOT_INFO[1];
+                        const picA    = ev[`pic_slot_${slot}a`];
+                        const picB    = ev[`pic_slot_${slot}b`];
+                        const hpA     = ev[`pic_hp_slot_${slot}a`];
+                        const people  = bySlot[slot] || [];
+                        // Jam & tanggal slot — dari schedule (Misa_Khusus) atau SLOT_INFO (Mingguan)
+                        const sc      = schedule.find(s => s.slot === slot);
+                        const jamLabel = isMisaKhusus
+                          ? `Misa ${slot} · ${sc?.jam || '07.00'}`
                           : info.time;
-                        // Tanggal: slot 1 = tanggal_latihan (sabtu), slot 2+ = tanggal_tugas (minggu)
-                        const tglSlot = !isMisaKhusus && slot === 1 && ev.tanggal_latihan
-                          ? formatDate(ev.tanggal_latihan, 'dd MMM')
-                          : formatDate(ev.tanggal_tugas, 'dd MMM');
+                        const tglLabel = isMisaKhusus
+                          ? (sc?.tanggal ? formatDate(sc.tanggal, 'EEE, dd MMM') : '')
+                          : (slot === 1 && ev.tanggal_latihan
+                              ? formatDate(ev.tanggal_latihan, 'EEE, dd MMM')
+                              : formatDate(ev.tanggal_tugas, 'EEE, dd MMM'));
                         return (
                           <div key={slot} className={`p-3 rounded-xl border ${lc.bg} border-gray-100`}>
                             <div className="mb-2 pb-2 border-b border-gray-200/70">
                               <p className="text-xs font-bold text-gray-700">{jamLabel}</p>
-                              {!isMisaKhusus && <p className="text-[10px] text-gray-400">{tglSlot}</p>}
+                              <p className="text-[10px] text-gray-500">{tglLabel}</p>
                               {picA||picB ? (
-                                <div className="mt-0.5">
+                                <div className="mt-1">
                                   <p className="text-[11px] text-brand-700 flex items-center gap-1">
                                     <UserCheck size={11}/>PIC: {[picA,picB].filter(Boolean).join(' & ')}
                                   </p>
@@ -1322,9 +1421,32 @@ export default function ScheduleWeeklyPage() {
                     </div>
                   );
                 })()}
-              </div>
+              {/* No 5: Pelatih di bawah slot cards */}
+              {(() => {
+                const pelatihNicks = [ev.pelatih_slot_1, ev.pelatih_slot_2, ev.pelatih_slot_3].filter(Boolean);
+                if (!pelatihNicks.length) return null;
+                return (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <p className="text-[10px] font-semibold text-teal-600 uppercase tracking-wide mb-1.5">🧑‍🏫 Pelatih Piket</p>
+                    <div className="flex flex-wrap gap-2">
+                      {pelatihNicks.map(nick => {
+                        const p = picOptions.find(u => u.nickname === nick);
+                        const hp = p?.hp_anak || p?.hp_ortu || '';
+                        return (
+                          <div key={nick} className="text-xs bg-teal-50 text-teal-800 px-2.5 py-1 rounded-xl border border-teal-100">
+                            <span className="font-semibold">{p?.nama_panggilan || nick}</span>
+                            {hp && <span className="ml-1.5 text-teal-500 text-[10px]">📱 {hp}</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
             );
-          })}
+            }); // end mainEvents.map
+          })()} {/* end IIFE grouping */}
         </div>
       )}
 
@@ -1465,14 +1587,12 @@ export default function ScheduleWeeklyPage() {
                 {addMisaForm.tipe==='Misa_Khusus' && (
                   <div>
                     <label className="label">Jumlah Slot / Misa</label>
-                    <select className="input" value={addMisaForm.jumlah_misa}
+                    <select className="input" value={addMisaForm.slot_schedule?.length || 1}
                       onChange={e=>{
                         const n = Number(e.target.value);
-                        setAddMisaForm(f=>({
-                          ...f,
-                          jumlah_misa: n,
-                          slot_times: Array.from({length:n}, (_,i) => f.slot_times[i] || '07.00'),
-                        }));
+                        const cur = addMisaForm.slot_schedule || [];
+                        const next = Array.from({length:n}, (_,i) => cur[i] || { tanggal: addMisaForm.tanggal_tugas || '', jam: '07.00' });
+                        setAddMisaForm(f=>({...f, jumlah_misa: n, slot_schedule: next}));
                       }}>
                       {[1,2,3,4].map(n=><option key={n} value={n}>{n} misa</option>)}
                     </select>
@@ -1480,29 +1600,44 @@ export default function ScheduleWeeklyPage() {
                 )}
               </div>
 
-              {/* Jam per slot — hanya Misa_Khusus */}
+              {/* Jadwal per slot — Misa_Khusus: tanggal + jam per slot */}
               {addMisaForm.tipe==='Misa_Khusus' && (
                 <div>
-                  <label className="label">Jam Misa</label>
-                  <div className="flex gap-2 flex-wrap">
-                    {addMisaForm.slot_times.map((jam, idx) => (
-                      <div key={idx} className="flex items-center gap-1.5">
-                        <span className="text-xs text-gray-500 w-12">Misa {idx+1}:</span>
+                  <label className="label">Jadwal per Misa</label>
+                  <p className="text-xs text-gray-400 mb-2">
+                    Isi tanggal & jam tiap misa. Misa 1 bisa H-1 (hari sebelumnya).
+                  </p>
+                  <div className="space-y-2">
+                    {(addMisaForm.slot_schedule || []).map((sc, idx) => (
+                      <div key={idx} className="flex items-center gap-2 bg-gray-50 rounded-xl p-2">
+                        <span className="text-xs font-medium text-gray-600 w-14 shrink-0">Misa {idx+1}</span>
+                        <input
+                          type="date"
+                          className="input text-sm flex-1"
+                          value={sc.tanggal}
+                          onChange={e => {
+                            const next = [...addMisaForm.slot_schedule];
+                            next[idx] = {...next[idx], tanggal: e.target.value};
+                            // Auto-set tanggal_tugas = tanggal misa terakhir
+                            const lastTgl = next[next.length-1].tanggal || e.target.value;
+                            setAddMisaForm(f=>({...f, slot_schedule: next, tanggal_tugas: lastTgl}));
+                          }}
+                        />
                         <input
                           type="text"
-                          className="input w-24 text-sm"
-                          value={jam}
+                          className="input text-sm w-20"
+                          value={sc.jam}
                           placeholder="07.00"
                           onChange={e => {
-                            const next = [...addMisaForm.slot_times];
-                            next[idx] = e.target.value;
-                            setAddMisaForm(f=>({...f, slot_times: next}));
+                            const next = [...addMisaForm.slot_schedule];
+                            next[idx] = {...next[idx], jam: e.target.value};
+                            setAddMisaForm(f=>({...f, slot_schedule: next}));
                           }}
                         />
                       </div>
                     ))}
                   </div>
-                  <p className="text-xs text-gray-400 mt-1">Format: 07.00, 17.30, dll.</p>
+                  <p className="text-[10px] text-gray-400 mt-1">Format jam: 07.00, 17.30, dll.</p>
                 </div>
               )}
 
@@ -1514,65 +1649,18 @@ export default function ScheduleWeeklyPage() {
                   {WARNA_OPTIONS.map(w=><option key={w}>{w}</option>)}
                 </select>
               </div>
-
-              {/* Misa Vigili — hanya Misa_Khusus */}
-              {addMisaForm.tipe==='Misa_Khusus' && (
-                <div className={`p-3 rounded-xl border-2 transition-all ${addMisaForm.ada_vigili ? 'border-brand-800 bg-brand-50' : 'border-gray-200 bg-gray-50'}`}>
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={addMisaForm.ada_vigili}
-                      onChange={e=>setAddMisaForm(f=>({...f, ada_vigili:e.target.checked}))}
-                      className="w-4 h-4 accent-brand-800"
-                    />
-                    <div>
-                      <p className="text-sm font-semibold text-gray-800">Ada Misa Vigili (H-1)</p>
-                      <p className="text-xs text-gray-500">
-                        Misa sore/malam di hari sebelum hari raya.
-                        Contoh: HR. Kenaikan Tuhan (Kamis) → Vigili Rabu sore.
-                      </p>
-                    </div>
-                  </label>
-
-                  {addMisaForm.ada_vigili && (
-                    <div className="mt-3 flex items-center gap-3">
-                      <span className="text-xs text-gray-600 w-32 flex-shrink-0">
-                        Jam Vigili ({addMisaForm.tanggal_tugas
-                          ? (() => {
-                              const [y,m,d] = addMisaForm.tanggal_tugas.split('-').map(Number);
-                              const vd = new Date(y,m-1,d-1);
-                              return ['Min','Sen','Sel','Rab','Kam','Jum','Sab'][vd.getDay()] + ', ' +
-                                vd.getDate() + ' ' + ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'][vd.getMonth()];
-                            })()
-                          : 'H-1'
-                        }):
-                      </span>
-                      <input
-                        type="text"
-                        className="input w-24 text-sm"
-                        value={addMisaForm.vigili_jam}
-                        placeholder="17.30"
-                        onChange={e=>setAddMisaForm(f=>({...f, vigili_jam:e.target.value}))}
-                      />
-                      <p className="text-xs text-gray-400">Format: 17.30</p>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* Preview ringkasan */}
-            {addMisaForm.perayaan && addMisaForm.tanggal_tugas && (
+            {addMisaForm.perayaan && (
               <div className="mt-4 p-3 bg-gray-50 rounded-xl text-xs text-gray-600 space-y-1">
                 <p className="font-semibold text-gray-800">Preview:</p>
-                {addMisaForm.ada_vigili && addMisaForm.tipe==='Misa_Khusus' && (() => {
-                  const [y,m,d] = addMisaForm.tanggal_tugas.split('-').map(Number);
-                  const vd = new Date(y,m-1,d-1);
-                  return (
-                    <p>📌 Vigili: {vd.getDate()}/{vd.getMonth()+1} pukul {addMisaForm.vigili_jam} WIB</p>
-                  );
-                })()}
-                <p>⛪ {addMisaForm.perayaan}: {addMisaForm.tanggal_tugas.split('-').reverse().join('/')} pukul {addMisaForm.slot_times?.join(', ')} WIB</p>
+                {(addMisaForm.slot_schedule||[]).map((sc,i) => (
+                  sc.tanggal ? <p key={i}>⛪ Misa {i+1}: {sc.tanggal.split('-').reverse().join('/')} pukul {sc.jam} WIB</p> : null
+                ))}
+                {addMisaForm.tipe==='Mingguan_HariRaya' && addMisaForm.tanggal_tugas && (
+                  <p>⛪ {addMisaForm.perayaan}: {addMisaForm.tanggal_tugas.split('-').reverse().join('/')} (4 slot)</p>
+                )}
               </div>
             )}
 

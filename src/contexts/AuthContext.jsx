@@ -10,17 +10,24 @@ export function AuthProvider({ children }) {
 
   const fetchProfile = useCallback(async () => {
     try {
-      // Try RPC first
-      const { data, error } = await supabase.rpc('get_my_profile');
-      if (!error && data) { setProfile(data); return; }
+      // Langsung query tabel users — lebih reliable dari RPC
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) return;
 
-      // Fallback: direct query (works even if RPC not deployed yet)
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
       const { data: row, error: rowErr } = await supabase
-        .from('users').select('*').eq('id', user.id).single();
-      if (!rowErr && row) setProfile(row);
-      else console.error('fetchProfile fallback failed:', rowErr?.message);
+        .from('users')
+        .select('*')
+        .eq('id', authUser.id)
+        .single();
+
+      if (!rowErr && row) {
+        setProfile(row);
+      } else {
+        // Fallback: coba via RPC jika direct query gagal (misal RLS)
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('get_my_profile');
+        if (!rpcErr && rpcData) setProfile(rpcData);
+        else console.error('fetchProfile: user not found in public.users', authUser.id);
+      }
     } catch (err) {
       console.error('fetchProfile exception:', err);
     }
