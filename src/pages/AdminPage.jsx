@@ -980,31 +980,66 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
 // ── Komponen: Status Edge Function ────────────────────────────
 // Tampil di atas bagian reset password — bantu diagnosa jika EF belum deploy
 function EdgeFunctionStatus({ supabase }) {
-  const [status,  setStatus]  = React.useState(null); // null | 'checking' | 'ok' | 'error'
-  const [detail,  setDetail]  = React.useState('');
+  const [status, setStatus] = React.useState(null);
+  const [detail, setDetail] = React.useState('');
 
   async function checkEdgeFunction() {
     setStatus('checking'); setDetail('');
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      // Kirim POST dengan mode khusus "ping" — tidak butuh auth, cukup cek EF hidup
       const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
-      // Kirim OPTIONS request — tidak perlu body, hanya cek apakah EF ada
       const res = await fetch(url, {
-        method: 'OPTIONS',
-        headers: { 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY },
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ mode: 'ping' }),
       });
-      if (res.ok || res.status === 200) {
-        setStatus('ok'); setDetail('Edge Function aktif dan siap digunakan.');
-      } else if (res.status === 404) {
+
+      const text = await res.text();
+
+      if (res.status === 404 || text.includes('Function not found') || text.includes('Not Found')) {
         setStatus('error');
-        setDetail('Edge Function belum di-deploy. Ikuti langkah di bawah.');
-      } else {
-        const text = await res.text();
-        setStatus('ok'); // OPTIONS kadang return non-200 tapi EF tetap ada
-        setDetail(`HTTP ${res.status} — Edge Function kemungkinan sudah ada.`);
+        setDetail('Edge Function belum di-deploy di Supabase.');
+        return;
       }
+
+      // Kalau dapat response apapun (401, 403, 200) — EF sudah ada
+      // 401 = EF ada tapi butuh auth (normal)
+      setStatus('ok');
+      setDetail(`Edge Function aktif (HTTP ${res.status}). Reset password siap digunakan.`);
+
     } catch (e) {
-      setStatus('error'); setDetail(`Network error: ${e.message}`);
+      // "Failed to fetch" bisa berarti CORS atau network — bukan berarti EF tidak ada
+      // Coba verifikasi via supabase client langsung
+      try {
+        const { data: sessionData } = await supabase.auth.refreshSession();
+        const token = sessionData?.session?.access_token;
+        if (!token) throw new Error('no token');
+
+        const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
+        const res2 = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ mode: 'ping' }),
+        });
+        const text2 = await res2.text();
+        if (res2.status === 404 || text2.includes('Not Found')) {
+          setStatus('error');
+          setDetail('Edge Function belum di-deploy.');
+        } else {
+          setStatus('ok');
+          setDetail(`Edge Function aktif (HTTP ${res2.status}).`);
+        }
+      } catch (e2) {
+        setStatus('error');
+        setDetail(`Tidak bisa terhubung: ${e2.message}. Pastikan VITE_SUPABASE_URL benar.`);
+      }
     }
   }
 
@@ -1021,8 +1056,8 @@ function EdgeFunctionStatus({ supabase }) {
             : status === 'checking' ? 'bg-yellow-400 animate-pulse'
             : 'bg-gray-300'}`}/>
           <span className="font-medium text-gray-700">
-            {status === null && 'Edge Function: belum dicek'}
-            {status === 'checking' && 'Mengecek Edge Function…'}
+            {status === null && 'Edge Function: klik Cek untuk verifikasi'}
+            {status === 'checking' && 'Mengecek…'}
             {status === 'ok' && '✅ Edge Function: Aktif'}
             {status === 'error' && '❌ Edge Function: Belum di-deploy'}
           </span>
@@ -1032,22 +1067,7 @@ function EdgeFunctionStatus({ supabase }) {
           {status === 'checking' ? '…' : 'Cek'}
         </button>
       </div>
-
       {detail && <p className="text-gray-600">{detail}</p>}
-
-      {status === 'error' && (
-        <div className="bg-white rounded-lg p-2.5 border border-red-100 space-y-1.5">
-          <p className="font-semibold text-red-800">Cara deploy Edge Function:</p>
-          <ol className="list-decimal list-inside space-y-1 text-gray-700">
-            <li>Buka <strong>Supabase Dashboard → Edge Functions</strong></li>
-            <li>Klik <strong>"New Function"</strong></li>
-            <li>Nama: <code className="bg-gray-100 px-1 rounded">admin-reset-password</code></li>
-            <li>Copy-paste isi file <code className="bg-gray-100 px-1 rounded">supabase/functions/admin-reset-password/index.ts</code></li>
-            <li>Klik <strong>Deploy</strong></li>
-            <li>Kembali ke sini → klik <strong>Cek</strong> lagi</li>
-          </ol>
-        </div>
-      )}
     </div>
   );
 }

@@ -34,6 +34,12 @@ serve(async (req) => {
       return reply({ ok: false, error: "SUPABASE_SERVICE_ROLE_KEY tidak tersedia di edge function" }, 500);
     }
 
+    // ── Ping — cek apakah EF aktif, tidak butuh auth ──────────────
+    const bodyPing = await req.clone().json().catch(() => ({}));
+    if (bodyPing.mode === "ping") {
+      return reply({ ok: true, message: "Edge Function admin-reset-password aktif" });
+    }
+
     // Admin client — service_role, bypass semua RLS
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
