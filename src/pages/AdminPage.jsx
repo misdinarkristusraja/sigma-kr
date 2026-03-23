@@ -335,7 +335,7 @@ export default function AdminPage() {
   async function loadUsers() {
     const { data } = await supabase
       .from('users')
-      .select('id, nickname, nama_panggilan, role, status, is_suspended, suspended_until, email, created_at')
+      .select('id, nickname, nama_panggilan, lingkungan, role, status, is_suspended, suspended_until, email, hp_ortu, hp_anak, created_at')
       .order('nama_panggilan');
     setUsers(data || []);
   }
@@ -520,10 +520,17 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
       }
       // Map ke format yang sama dengan massReset hasil
       const results = (json.results || []).map(r => ({
-        user: { nickname: r.nickname, nama_panggilan: r.nama, hp_ortu: r.hp || '' },
+        user: {
+          nickname:       r.nickname || '',
+          nama_panggilan: r.nama     || '',
+          lingkungan:     r.lingkungan || '',
+          hp_ortu:        r.hp_ortu  || '',
+          hp_anak:        r.hp_anak  || '',
+          email:          r.email    || '',
+        },
         password: r.password || '',
-        ok: r.ok,
-        error: r.error,
+        ok:       r.ok,
+        error:    r.error,
       }));
       setMassRes(results);
       const ok = results.filter(r => r.ok).length;
@@ -561,33 +568,35 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
   }
 
   function downloadMassResetExcel(results) {
-    const rows = results.map(r => ({
-      'Username':     r.user.nickname,
-      'Nama':         r.user.nama_panggilan,
-      'Lingkungan':   r.user.lingkungan || '',
-      'Password Baru': r.ok ? r.password : '— GAGAL —',
-      'Status':       r.ok ? 'Berhasil' : `Gagal: ${r.error}`,
-      'HP Ortu':      r.user.hp_ortu || '',
-      'HP Anak':      r.user.hp_anak || '',
-    }));
-
-    const ws = XLSX.utils.json_to_sheet(rows);
-    // Style header baris pertama
-    ws['!cols'] = [14, 22, 20, 14, 18, 16, 16].map(w => ({ wch: w }));
-
-    // Bold header cells
-    const range = XLSX.utils.decode_range(ws['!ref']);
-    for (let C = range.s.c; C <= range.e.c; C++) {
-      const addr = XLSX.utils.encode_cell({ r: 0, c: C });
-      if (!ws[addr]) continue;
-      ws[addr].s = { font: { bold: true }, fill: { fgColor: { rgb: '8B0000' } }, fontColor: { rgb: 'FFFFFF' } };
+    if (!results || results.length === 0) {
+      toast.error('Tidak ada data untuk diexport');
+      return;
     }
 
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Reset Password');
-    const today = new Date().toISOString().split('T')[0];
-    XLSX.writeFile(wb, `reset-password-${today}.xlsx`);
-    toast.success('Excel berhasil diunduh!');
+    try {
+      const rows = results.map(r => ({
+        'Username':      r.user?.nickname    || r.nickname    || '',
+        'Nama':          r.user?.nama_panggilan || r.nama    || '',
+        'Lingkungan':    r.user?.lingkungan  || '',
+        'Password Baru': r.ok ? (r.password || '') : '— GAGAL —',
+        'Status':        r.ok ? 'Berhasil' : `Gagal: ${r.error || ''}`,
+        'HP Ortu':       r.user?.hp_ortu    || r.hp_ortu    || '',
+        'HP Anak':       r.user?.hp_anak    || r.hp_anak    || '',
+        'Email':         r.user?.email      || r.email      || '',
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      ws['!cols'] = [16, 24, 20, 16, 18, 17, 17, 30].map(w => ({ wch: w }));
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Reset Password');
+      const today = new Date().toISOString().split('T')[0];
+      XLSX.writeFile(wb, `reset-password-${today}.xlsx`);
+      toast.success(`Excel diunduh! ${rows.length} anggota.`);
+    } catch (err) {
+      console.error('Excel error:', err);
+      toast.error('Gagal buat Excel: ' + err.message);
+    }
   }
 
   // Tetap sediakan CSV sebagai fallback

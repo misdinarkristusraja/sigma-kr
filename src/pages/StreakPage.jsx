@@ -97,32 +97,34 @@ export default function StreakPage() {
 
   // ── Export Excel semua streak anggota (admin) ──────────────────
   const handleExportExcel = () => {
-    const rows = filteredMembers.map(m => {
-      const s = m.streak;
-      return {
-        'Nama':            m.nama_panggilan,
-        'Username':        m.nickname,
-        'Lingkungan':      m.lingkungan || '',
-        'Streak Aktif':    s?.current_streak    ?? 0,
-        'Streak Terpanjang': s?.longest_streak  ?? 0,
-        'Total Hadir Wajib': s?.total_hadir_wajib ?? 0,
-        'Streak Putus':    s?.streak_broken_count ?? 0,
-        'Badge':           m.badges.map(b => b.badge?.nama).filter(Boolean).join(', '),
-        'Terakhir Hadir':  s?.last_attended_date
-          ? format(parseISO(s.last_attended_date), 'd MMM yyyy', { locale: localeId })
-          : '—',
-        'Diperbarui':      s?.updated_at
-          ? format(parseISO(s.updated_at), 'd MMM yyyy HH:mm', { locale: localeId })
-          : '—',
-      };
-    });
-    const ws = XLSX.utils.json_to_sheet(rows);
-    // Column widths
-    ws['!cols'] = [20,15,20,12,16,16,12,30,15,18].map(w => ({ wch: w }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Streak Anggota');
-    XLSX.writeFile(wb, `streak-anggota-${format(new Date(),'yyyyMMdd')}.xlsx`);
-    toast.success('Excel diunduh!');
+    if (!filteredMembers.length) { toast.error('Tidak ada data'); return; }
+    try {
+      const rows = filteredMembers.map(m => {
+        const s = m.streak;
+        return {
+          'Nama':              m.nama_panggilan,
+          'Username':          m.nickname,
+          'Lingkungan':        m.lingkungan || '',
+          'Streak Aktif':      s?.current_streak    ?? 0,
+          'Streak Terpanjang': s?.longest_streak    ?? 0,
+          'Total Hadir Wajib': s?.total_hadir_wajib ?? 0,
+          'Streak Putus':      s?.streak_broken_count ?? 0,
+          'Badge':             m.badges.map(b => b.badge?.nama).filter(Boolean).join(', '),
+          'Terakhir Hadir':    s?.last_attended_date
+            ? format(parseISO(s.last_attended_date), 'd MMM yyyy', { locale: localeId })
+            : '—',
+        };
+      });
+      const ws = XLSX.utils.json_to_sheet(rows);
+      ws['!cols'] = [22, 16, 20, 12, 16, 16, 12, 32, 15].map(w => ({ wch: w }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Streak Anggota');
+      XLSX.writeFile(wb, `streak-anggota-${format(new Date(),'yyyyMMdd')}.xlsx`);
+      toast.success(`Excel diunduh! ${rows.length} anggota.`);
+    } catch (err) {
+      console.error('Excel error:', err);
+      toast.error('Gagal export Excel: ' + err.message);
+    }
   };
 
   if (!loading && !enabled) {

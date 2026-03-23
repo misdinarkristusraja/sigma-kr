@@ -139,7 +139,7 @@ serve(async (req) => {
     if (mode === "provision_all") {
       const { data: members, error: membErr } = await admin
         .from("users")
-        .select("id, email, nickname, nama_panggilan, hp_ortu, hp_anak")
+        .select("id, email, nickname, nama_panggilan, lingkungan, hp_ortu, hp_anak")
         .in("status", ["Active", "Pending"]);
 
       if (membErr) return reply({ ok: false, error: membErr.message }, 500);
@@ -167,20 +167,20 @@ serve(async (req) => {
                 await admin.from("users").update({ id: found.id }).eq("id", m.id);
               }
               await admin.from("users").update({ must_change_password: true }).eq("id", found.id);
-              results.push({ nickname: m.nickname, nama: m.nama_panggilan, email: m.email, password: pw, ok: true, action: "synced" });
+              results.push({ nickname: m.nickname, nama: m.nama_panggilan, email: m.email, lingkungan: m.lingkungan??"", hp_ortu: m.hp_ortu??"", hp_anak: m.hp_anak??"", password: pw, ok: true, action: "synced" });
             } else {
-              results.push({ nickname: m.nickname, nama: m.nama_panggilan, email: m.email, password: null, ok: false, error: createErr.message });
+              results.push({ nickname: m.nickname, nama: m.nama_panggilan, email: m.email, lingkungan: m.lingkungan??"", hp_ortu: m.hp_ortu??"", hp_anak: m.hp_anak??"", password: null, ok: false, error: createErr.message });
             }
             continue;
           }
 
           await admin.from("users").update({ must_change_password: true }).eq("id", created.user.id);
-          results.push({ nickname: m.nickname, nama: m.nama_panggilan, email: m.email, password: pw, ok: true, action: "created" });
+          results.push({ nickname: m.nickname, nama: m.nama_panggilan, email: m.email, lingkungan: m.lingkungan??"", hp_ortu: m.hp_ortu??"", hp_anak: m.hp_anak??"", password: pw, ok: true, action: "created" });
         } else {
           // Sudah ada — reset password
           const { error: upErr } = await admin.auth.admin.updateUserById(m.id, { password: pw, email_confirm: true });
           await admin.from("users").update({ must_change_password: true }).eq("id", m.id);
-          results.push({ nickname: m.nickname, nama: m.nama_panggilan, email: m.email, password: pw, ok: !upErr, action: "reset", error: upErr?.message });
+          results.push({ nickname: m.nickname, nama: m.nama_panggilan, email: m.email, lingkungan: m.lingkungan??"", hp_ortu: m.hp_ortu??"", hp_anak: m.hp_anak??"", password: pw, ok: !upErr, action: "reset", error: upErr?.message });
         }
       }
 
