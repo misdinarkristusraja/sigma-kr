@@ -1058,6 +1058,19 @@ function EdgeFunctionStatus({ supabase }) {
         </button>
       </div>
       {detail && <p className="text-gray-600">{detail}</p>}
+
+      {/* Panduan deploy selalu tampil */}
+      <div className="bg-white rounded-lg p-2.5 border border-gray-200 space-y-1.5 mt-1">
+        <p className="font-semibold text-gray-700 text-xs">📋 Cara deploy + setup (wajib):</p>
+        <ol className="list-decimal list-inside space-y-1 text-gray-600 text-xs">
+          <li>Supabase Dashboard → <strong>Edge Functions</strong> → klik <code className="bg-gray-100 px-1 rounded">admin-reset-password</code></li>
+          <li>Klik <strong>Deploy</strong> ulang dengan kode terbaru dari ZIP</li>
+          <li className="text-red-700 font-semibold">⚠️ Buka tab <strong>Settings</strong> → NONAKTIFKAN <strong>"Enforce JWT Verification"</strong></li>
+          <li>Tab <strong>Secrets</strong> → tambah: <code className="bg-gray-100 px-1 rounded">SIGMA_SECRET</code> = nilai dari <code className="bg-gray-100 px-1 rounded">VITE_SIGMA_SECRET</code> di Vercel</li>
+          <li>Vercel → Settings → Environment Variables → tambah <code className="bg-gray-100 px-1 rounded">VITE_SIGMA_SECRET</code> = string acak (sama dengan langkah 4)</li>
+          <li>Redeploy Vercel → klik <strong>Cek</strong> di sini</li>
+        </ol>
+      </div>
     </div>
   );
 }
