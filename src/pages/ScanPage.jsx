@@ -200,12 +200,25 @@ export default function ScanPage() {
 
     // 3. Cari semua event hari ini (tanggal_tugas atau tanggal_latihan = hari ini)
     const today = toLocalISO(new Date());
-    const { data: todayEvents } = await supabase
+    // Query events — is_misa_besar & mode_latihan butuh migration 012 & 013
+    // Fallback gracefully jika kolom belum ada
+    let { data: todayEvents } = await supabase
       .from('events')
       .select('id, nama_event, tipe_event, tanggal_tugas, tanggal_latihan, perayaan, draft_note, status_event, is_misa_besar, mode_latihan')
       .or(`tanggal_tugas.eq.${today},tanggal_latihan.eq.${today}`)
       .in('status_event', ['Akan_Datang','Berlangsung'])
       .not('is_draft', 'eq', true);
+
+    // Jika kolom baru belum ada, fallback query tanpa kolom tsb
+    if (!todayEvents) {
+      const { data: fallbackEvents } = await supabase
+        .from('events')
+        .select('id, nama_event, tipe_event, tanggal_tugas, tanggal_latihan, perayaan, draft_note, status_event')
+        .or(`tanggal_tugas.eq.${today},tanggal_latihan.eq.${today}`)
+        .in('status_event', ['Akan_Datang','Berlangsung'])
+        .not('is_draft', 'eq', true);
+      todayEvents = (fallbackEvents || []).map(e => ({ ...e, is_misa_besar: false, mode_latihan: 'gabung' }));
+    }
 
     // 4. Validasi: ada event hari ini?
     if (!todayEvents || todayEvents.length === 0) {

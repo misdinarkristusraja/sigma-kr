@@ -124,7 +124,10 @@ function MisaBesarTab() {
       const since = new Date(Date.now() - 60 * 24 * 3600 * 1000)
         .toISOString().split('T')[0];
 
-      const { data: evData, error: evErr } = await supabase
+      // Query dengan mode_latihan (butuh migration 013)
+      // Jika kolom belum ada, fallback ke query tanpa kolom tsb
+      let evData, evErr;
+      ({ data: evData, error: evErr } = await supabase
         .from('events')
         .select(`
           id, perayaan, nama_event, tipe_event, tanggal_tugas,
@@ -134,7 +137,25 @@ function MisaBesarTab() {
         `)
         .eq('is_misa_besar', true)
         .gte('tanggal_tugas', since)
-        .order('tanggal_tugas');
+        .order('tanggal_tugas'));
+
+      // Fallback: kolom mode_latihan belum ada (migration 013 belum dijalankan)
+      if (evErr?.message?.includes('mode_latihan')) {
+        toast('⚠️ Jalankan migration 013_mode_latihan.sql di Supabase — menggunakan mode default', { icon: '⚠️' });
+        ({ data: evData, error: evErr } = await supabase
+          .from('events')
+          .select(`
+            id, perayaan, nama_event, tipe_event, tanggal_tugas,
+            warna_liturgi, is_draft, is_misa_besar,
+            assignments(user_id, slot_number,
+              users(id, nickname, nama_panggilan, hp_anak, hp_ortu))
+          `)
+          .eq('is_misa_besar', true)
+          .gte('tanggal_tugas', since)
+          .order('tanggal_tugas'));
+        // Inject default mode_latihan ke setiap row
+        if (evData) evData = evData.map(e => ({ ...e, mode_latihan: 'gabung' }));
+      }
 
       if (evErr) {
         toast.error('Gagal memuat event: ' + evErr.message);
