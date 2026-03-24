@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { generateICS, downloadICS } from '../lib/calendarExport';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDate, downloadCSV, hitungPoin } from '../lib/utils';
 import { BarChart2, Download, TrendingUp, Calendar, RefreshCw, Info, Search } from 'lucide-react';
@@ -225,6 +226,21 @@ export default function RecapPage() {
       .then(({ data }) => setMembers(data || []));
   }, [isPengurus]);
 
+  // ── Export ke Google Calendar ─────────────────────────
+  async function exportToCalendar() {
+    const uid = selUser || profile?.id;
+    if (!uid) return;
+    const { data: assigns } = await supabase.from('assignments')
+      .select('event_id, slot_number, events(tanggal_tugas, tanggal_latihan, perayaan, nama_event)')
+      .eq('user_id', uid)
+      .gte('events.tanggal_tugas', new Date().toISOString().split('T')[0]);
+    const ics = generateICS(assigns || [], profile?.nama_panggilan);
+    downloadICS(ics, `jadwal-${profile?.nickname || 'misdinar'}.ics`);
+    import('react-hot-toast').then(({default:toast}) =>
+      toast.success('File .ics diunduh! Buka dengan Google Calendar / iCal')
+    );
+  }
+
   // ── Load personal rekap (real-time) ──────────────────
   const loadPersonal = useCallback(async () => {
     const uid = selUser || profile?.id;
@@ -427,7 +443,10 @@ export default function RecapPage() {
         </div>
         <div className="flex gap-2">
           <button onClick={loadPersonal} className="btn-ghost p-2"><RefreshCw size={16}/></button>
-          <button onClick={handleExport} className="btn-outline gap-2"><Download size={16}/> CSV</button>
+          <button onClick={handleExport} className="btn-outline gap-2 transition-all hover:scale-105 active:scale-95"><Download size={16}/> CSV</button>
+          <button onClick={exportToCalendar} className="btn-outline gap-2 text-sm transition-all hover:scale-105 active:scale-95">
+            <Calendar size={15}/> Google Cal
+          </button>
         </div>
       </div>
 
@@ -732,5 +751,6 @@ export default function RecapPage() {
         </p>
       </div>
     </div>
+  </div>
   );
 }

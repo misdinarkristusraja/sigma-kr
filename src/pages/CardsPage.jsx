@@ -16,7 +16,7 @@ function truncate(s, n) {
 
 async function makeQR(url) {
   return QRCode.toDataURL(url, {
-    width: 400, margin: 1,
+    width: 280, margin: 1,
     color: { dark: '#000000', light: '#ffffff' },
     errorCorrectionLevel: 'M',
   });
@@ -80,15 +80,15 @@ async function drawCard(member, qrDataUrl, type) {
   }
   c.restore();
 
-  const QS = 180, QX = W - QS - 14, QY = Math.floor((H - QS) / 2);
+  const QS = 100, QX = W - QS - 16, QY = Math.floor((H - QS) / 2) - 6;
 
   // QR background
   c.save();
-  rr(c, QX - 8, QY - 8, QS + 16, QS + 16, 12);
-  c.fillStyle = isTugas ? 'rgba(255,255,255,0.97)' : 'rgba(255,255,255,0.15)';
+  rr(c, QX - 6, QY - 6, QS + 12, QS + 12, 10);
+  c.fillStyle = isTugas ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.13)';
   c.fill();
-  c.strokeStyle = isTugas ? '#FCD34D' : 'rgba(255,255,255,0.30)';
-  c.lineWidth = 2;
+  c.strokeStyle = isTugas ? '#FCD34D' : 'rgba(255,255,255,0.25)';
+  c.lineWidth = 1.5;
   c.stroke();
   c.restore();
 
@@ -371,5 +371,6 @@ export default function CardsPage() {
         </div>
       </div>
     </div>
+  </div>
   );
 }

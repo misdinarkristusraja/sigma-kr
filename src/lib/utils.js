@@ -123,65 +123,6 @@ export function toNickname(str) {
   return str.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
 }
 
-/**
- * Generate nickname dari nama_panggilan + inisial kata setelahnya di nama_lengkap
- *
- * Contoh:
- *   nama_panggilan="satrio", nama_lengkap="Bernardus Satrio Eko Utomo"
- *   → kata setelah "satrio": ["Eko","Utomo"] → inisial "eu"
- *   → nickname: "satrio_eu"
- *
- *   nama_panggilan="gerrard", nama_lengkap="Stefanus Gerrard Van Creidoagape"
- *   → kata setelah "gerrard": ["Van","Creidoagape"] → inisial "vc"
- *   → nickname: "gerrard_vc"
- *
- *   Jika tidak ada kata setelahnya, pakai kata sebelum nama_panggilan.
- *   Jika nama_panggilan tidak ditemukan di nama_lengkap, pakai semua kata lain.
- *   Jika nama tunggal, kembalikan nama_panggilan saja.
- */
-export function generateNickname(namaPanggilan, namaLengkap) {
-  const panggil = (namaPanggilan || '').trim().toLowerCase();
-  const lengkap = (namaLengkap  || '').trim().toLowerCase();
-
-  if (!panggil) return '';
-
-  // Bersihkan karakter non-alpha dari nama_panggilan untuk nickname
-  const base = panggil.replace(/[^a-z0-9]/g, '');
-  if (!base) return '';
-
-  if (!lengkap) return base;
-
-  // Split nama lengkap jadi kata-kata bersih
-  const words = lengkap
-    .replace(/[^a-z\s]/g, '')
-    .split(/\s+/)
-    .filter(w => w.length > 0);
-
-  // Cari posisi nama_panggilan di nama_lengkap
-  const idx = words.findIndex(w => w === base || w.startsWith(base));
-
-  let otherWords;
-  if (idx === -1) {
-    // Tidak ketemu — pakai semua kata selain yang sama persis
-    otherWords = words.filter(w => w !== base);
-  } else if (idx < words.length - 1) {
-    // Ada kata setelah nama_panggilan → pakai itu
-    otherWords = words.slice(idx + 1);
-  } else {
-    // Nama_panggilan di akhir → pakai kata sebelumnya
-    otherWords = words.slice(0, idx);
-  }
-
-  // Ambil huruf pertama tiap kata lain (maks 4 huruf)
-  const suffix = otherWords
-    .map(w => w[0])
-    .join('')
-    .slice(0, 4);
-
-  return suffix ? `${base}_${suffix}` : base;
-}
-
-
 export function capitalize(str) {
   return str?.charAt(0).toUpperCase() + str?.slice(1).toLowerCase();
 }

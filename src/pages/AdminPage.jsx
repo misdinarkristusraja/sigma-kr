@@ -1,49 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Settings, Save, RefreshCw, Shield, Users, Database, Bell, KeyRound, MessageCircle, Send, Flame, FileSpreadsheet } from 'lucide-react';
-import { broadcastNotification, sendNotification } from '../hooks/useNotifications';
+import { Settings, Save, RefreshCw, Shield, Users, Database, Bell, KeyRound, MessageCircle, Send } from 'lucide-react';
 import toast from 'react-hot-toast';
-import * as XLSX from 'xlsx';
-
-// ── Helper: reset password via Edge Function ─────────────────────────
-// pgcrypto dan GoTrue bcrypt tidak kompatibel → harus pakai Supabase Admin API
-// Edge function ada di: supabase/functions/admin-reset-password/index.ts
-// Panggil Edge Function dengan SIGMA_SECRET — tidak perlu token JWT
-async function callEdge(_supabaseClient, payload) {
-  const secret = import.meta.env.VITE_SIGMA_SECRET;
-  if (!secret) throw new Error('VITE_SIGMA_SECRET belum di-set di environment variables Vercel');
-
-  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
-  let res;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ ...payload, secret }),
-    });
-  } catch (e) {
-    throw new Error(`Network error: ${e.message}`);
-  }
-  const text = await res.text();
-  let data;
-  try { data = JSON.parse(text); }
-  catch {
-    if (res.status === 404) throw new Error('Edge Function belum di-deploy.');
-    throw new Error(`HTTP ${res.status}: ${text.slice(0, 120)}`);
-  }
-  if (!data.ok && !data.results) throw new Error(data.error || `HTTP ${res.status}`);
-  return data;
-}
-
-async function resetPasswordViaEdge(supabaseClient, userId, newPassword) {
-  const data = await callEdge(supabaseClient, { mode: 'reset', user_id: userId, new_password: newPassword });
-  if (!data.ok) throw new Error(data.error || 'Reset gagal');
-  return data;
-}
 
 const CONFIG_GROUPS = {
   'Opt-in Misa Harian': ['window_optin_harian_start','window_optin_harian_end'],
@@ -51,148 +10,9 @@ const CONFIG_GROUPS = {
   'Tukar Jadwal':       ['swap_expire_hours'],
   'Suspend':            ['max_absen_before_suspend','suspend_duration_days'],
   'Liturgi':            ['gcatholic_url'],
-  'Gamifikasi':         ['streak_feature_enabled'],
 };
 
-// ─── Tab Notifikasi & Gamifikasi ─────────────────────────────────────────
-function NotifAdminTab() {
-  const [title,    setTitle]    = React.useState('');
-  const [body,     setBody]     = React.useState('');
-  const [type,     setType]     = React.useState('pengumuman');
-  const [sending,  setSending]  = React.useState(false);
-  const [recalc,   setRecalc]   = React.useState(false);
-  const [lastResult, setResult] = React.useState('');
-
-  const handleBroadcast = async () => {
-    if (!title || !body) { toast.error('Judul & isi notifikasi wajib diisi'); return; }
-    setSending(true);
-    try {
-      await broadcastNotification({ title, body, type });
-      toast.success('Notifikasi dikirim ke semua anggota aktif!');
-      setTitle(''); setBody('');
-    } catch (err) {
-      toast.error('Gagal kirim notifikasi');
-    }
-    setSending(false);
-  };
-
-  const handleRecalcStreak = async () => {
-    setRecalc(true);
-    try {
-      const { data, error } = await supabase.rpc('recalculate_all_streaks');
-      if (error) throw error;
-      setResult(data || 'Selesai');
-      toast.success(data || 'Streak berhasil dihitung ulang');
-    } catch {
-      toast.error('Gagal hitung ulang streak');
-    }
-    setRecalc(false);
-  };
-
-  const TYPE_OPTS = [
-    { value: 'pengumuman', label: '📢 Pengumuman' },
-    { value: 'jadwal',     label: '📅 Jadwal' },
-    { value: 'latihan',    label: '🎵 Latihan' },
-    { value: 'streak',     label: '🔥 Streak' },
-  ];
-
-  return (
-    <div className="space-y-6">
-      {/* Broadcast Notifikasi */}
-      <div className="card">
-        <div className="flex items-center gap-2 mb-4">
-          <Bell size={18} className="text-brand-800"/>
-          <h3 className="font-semibold text-gray-800">Broadcast Notifikasi ke Semua Anggota</h3>
-        </div>
-        <div className="space-y-3">
-          <div className="grid sm:grid-cols-2 gap-3">
-            <div>
-              <label className="label text-xs">Judul Notifikasi *</label>
-              <input value={title} onChange={e => setTitle(e.target.value)}
-                className="input" placeholder="cth: Jadwal Latihan Natal"/>
-            </div>
-            <div>
-              <label className="label text-xs">Tipe</label>
-              <select value={type} onChange={e => setType(e.target.value)} className="input">
-                {TYPE_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="label text-xs">Isi Notifikasi *</label>
-            <textarea value={body} onChange={e => setBody(e.target.value)}
-              className="input resize-none" rows={3}
-              placeholder="cth: Latihan Natal akan dilaksanakan Sabtu 20 Des pukul 09.00 WIB di Gereja..."/>
-          </div>
-          <div className="flex items-start gap-3">
-            <button onClick={handleBroadcast} disabled={sending || !title || !body}
-              className="btn-primary gap-2">
-              <Send size={15}/>
-              {sending ? 'Mengirim…' : 'Kirim ke Semua Anggota'}
-            </button>
-            <p className="text-xs text-gray-400 mt-2">
-              Notifikasi akan muncul di ikon lonceng setiap anggota aktif.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Streak Management */}
-      <div className="card">
-        <div className="flex items-center gap-2 mb-4">
-          <Flame size={18} className="text-orange-500"/>
-          <h3 className="font-semibold text-gray-800">Manajemen Streak Gamifikasi</h3>
-        </div>
-        <div className="space-y-4">
-          <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-sm text-amber-800">
-            <p className="font-medium mb-1">🔒 Fitur ini akan dipublish pertengahan April</p>
-            <p className="text-xs text-amber-700">
-              Aktifkan <code className="bg-amber-100 px-1 rounded">streak_feature_enabled</code> di tab
-              Konfigurasi untuk menampilkan menu Streak ke semua anggota.
-              Streak tetap dihitung di balik layar meski belum dipublish.
-            </p>
-          </div>
-
-          <div>
-            <p className="text-sm text-gray-700 mb-2">
-              Hitung ulang streak semua anggota berdasarkan rekap_poin_mingguan &
-              absensi latihan wajib. Jalankan ini setelah scan absensi selesai.
-            </p>
-            <div className="flex items-center gap-3">
-              <button onClick={handleRecalcStreak} disabled={recalc}
-                className="btn-outline gap-2">
-                <RefreshCw size={15} className={recalc ? 'animate-spin' : ''}/>
-                {recalc ? 'Menghitung…' : 'Hitung Ulang Semua Streak'}
-              </button>
-              {lastResult && (
-                <span className="text-sm text-green-700 font-medium">✅ {lastResult}</span>
-              )}
-            </div>
-          </div>
-
-          <div className="grid sm:grid-cols-2 gap-3 pt-2 border-t border-gray-100">
-            <div className="p-3 bg-gray-50 rounded-xl text-sm">
-              <p className="font-medium text-gray-700">Badge Otomatis</p>
-              <p className="text-xs text-gray-500 mt-1">
-                Badge diberikan otomatis saat recalculate dijalankan.
-                Tidak ada notifikasi badge dikirim ke anggota sebelum fitur dipublish.
-              </p>
-            </div>
-            <div className="p-3 bg-gray-50 rounded-xl text-sm">
-              <p className="font-medium text-gray-700">Cara Aktifkan</p>
-              <ol className="text-xs text-gray-500 mt-1 space-y-0.5 list-decimal list-inside">
-                <li>Buka tab ⚙️ Konfigurasi</li>
-                <li>Cari grup "Gamifikasi"</li>
-                <li>Set <code>streak_feature_enabled</code> = <code>true</code></li>
-                <li>Save</li>
-              </ol>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+// ─── Komponen: Quick Test Reset ──────────────────────────────
 function QuickTestReset({ members, genPassword, onReset }) {
   const [selUser,  setSelUser]  = React.useState('');
   const [tempPw,   setTempPw]   = React.useState('');
@@ -336,7 +156,7 @@ export default function AdminPage() {
   async function loadUsers() {
     const { data } = await supabase
       .from('users')
-      .select('id, nickname, nama_panggilan, lingkungan, role, status, is_suspended, suspended_until, email, hp_ortu, hp_anak, created_at')
+      .select('id, nickname, nama_panggilan, role, status, is_suspended, suspended_until, email, created_at')
       .order('nama_panggilan');
     setUsers(data || []);
   }
@@ -387,11 +207,12 @@ export default function AdminPage() {
   async function resetPassword(user) {
     if (!confirm(`Reset password ${user.nickname}?`)) return;
     const tempPass = `sigma${user.myid?.slice(0,6) || 'reset'}`;
-    try {
-      await resetPasswordViaEdge(supabase, user.id, tempPass);
-      await supabase.from('audit_logs').insert({ actor_id: profile?.id, action: 'RESET_PASSWORD', target_id: user.id });
-      toast.success(`Password direset ke: ${tempPass}`);
-    } catch (e) { toast.error('Gagal reset: ' + e.message); }
+    const { data, error } = await supabase.rpc('admin_reset_password', {
+      p_user_id: user.id, p_new_password: tempPass,
+    });
+    if (error || data?.ok === false) { toast.error('Gagal reset: ' + (error?.message || data?.error)); return; }
+    await supabase.from('audit_logs').insert({ actor_id: profile?.id, action: 'RESET_PASSWORD', target_id: user.id });
+    toast.success(`Password direset ke: ${tempPass}`);
   }
 
   async function manualBackup() {
@@ -476,7 +297,11 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     for (const u of targets) {
       const pw = genPassword(8);
       try {
-        await resetPasswordViaEdge(supabase, u.id, pw);
+        const { data, error } = await supabase.rpc('admin_reset_password', {
+          p_user_id: u.id, p_new_password: pw,
+        });
+        if (error) throw error;
+        if (data?.ok === false) throw new Error(data.error);
         results.push({ user: u, password: pw, error: null });
       } catch (e) {
         results.push({ user: u, password: pw, error: e.message });
@@ -494,107 +319,32 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     window.open(`https://wa.me/${phone}?text=${buildWAMsg(user, password)}`, '_blank');
   }
 
-  async function provisionAllAccounts() {
-    if (!confirm(
-      'Provision akun untuk semua anggota yang belum punya akun login?\n' +
-      'Password acak akan di-generate. Download Excel setelah selesai.'
-    )) return;
-    setMassLoad(true);
-    setMassRes([]);
-    try {
-      const json = await callEdge(supabase, { mode: 'provision_all' });
-      const results = (json.results || []).map(r => ({
-        user: {
-          nickname:       r.nickname    || '',
-          nama_panggilan: r.nama        || '',
-          lingkungan:     r.lingkungan  || '',
-          hp_ortu:        r.hp_ortu     || '',
-          hp_anak:        r.hp_anak     || '',
-          email:          r.email       || '',
-        },
-        password: r.password || '',
-        ok:       r.ok,
-        error:    r.error,
-      }));
-      setMassRes(results);
-      const ok = results.filter(r => r.ok).length;
-      toast.success(`${ok}/${results.length} akun berhasil di-provision!`);
-      downloadMassResetExcel(results);
-      loadUsers();
-    } catch (e) {
-      toast.error('Error: ' + e.message);
-    }
-    setMassLoad(false);
-  }
-
   async function massResetAllPasswords() {
-    if (!confirm(
-      `Reset password semua anggota aktif?\n` +
-      `Proses dilakukan di server — tidak perlu menunggu lama.\n` +
-      `Setiap anggota wajib ganti password saat login berikutnya.`
-    )) return;
+    // Exclude Administrator accounts from mass reset
+    const targets = users.filter(u => u.status === 'Active' && u.role !== 'Administrator');
+    if (!confirm(`Reset password ${targets.length} anggota aktif (Admin TIDAK termasuk)?\nSetiap orang akan wajib ganti password saat login.`)) return;
     setMassLoad(true);
     setMassRes([]);
-    try {
-      // Gunakan provision_all mode — proses di server sekaligus, jauh lebih cepat
-      const json = await callEdge(supabase, { mode: 'provision_all' });
-      const results = (json.results || []).map(r => ({
-        user: {
-          nickname:       r.nickname    || '',
-          nama_panggilan: r.nama        || '',
-          lingkungan:     r.lingkungan  || '',
-          hp_ortu:        r.hp_ortu     || '',
-          hp_anak:        r.hp_anak     || '',
-          email:          r.email       || '',
-        },
-        password: r.password || '',
-        ok:       r.ok,
-        error:    r.error,
-      }));
-      setMassRes(results);
-      const ok = results.filter(r => r.ok).length;
-      toast.success(`${ok}/${results.length} password berhasil direset!`);
-      downloadMassResetExcel(results);
-      loadUsers();
-    } catch (e) {
-      toast.error('Gagal: ' + e.message);
+    const results = [];
+    for (const u of targets) {
+      const pw = genPassword(8);
+      try {
+        const { data, error } = await supabase.rpc('admin_reset_password', { p_user_id: u.id, p_new_password: pw });
+        if (error) throw error;
+        if (data?.ok === false) throw new Error(data.error);
+        results.push({ user: u, password: pw, ok: true });
+      } catch (e) {
+        results.push({ user: u, password: pw, ok: false, error: e.message });
+      }
     }
+    setMassRes(results);
     setMassLoad(false);
+    const ok = results.filter(r=>r.ok).length;
+    toast.success(`${ok}/${results.length} password berhasil direset! (Admin dilewati)`);
+    // Auto-download CSV
+    downloadMassResetCSV(results);
   }
 
-  function downloadMassResetExcel(results) {
-    if (!results || results.length === 0) {
-      toast.error('Tidak ada data untuk diexport');
-      return;
-    }
-
-    try {
-      const rows = results.map(r => ({
-        'Username':      r.user?.nickname    || r.nickname    || '',
-        'Nama':          r.user?.nama_panggilan || r.nama    || '',
-        'Lingkungan':    r.user?.lingkungan  || '',
-        'Password Baru': r.ok ? (r.password || '') : '— GAGAL —',
-        'Status':        r.ok ? 'Berhasil' : `Gagal: ${r.error || ''}`,
-        'HP Ortu':       r.user?.hp_ortu    || r.hp_ortu    || '',
-        'HP Anak':       r.user?.hp_anak    || r.hp_anak    || '',
-        'Email':         r.user?.email      || r.email      || '',
-      }));
-
-      const ws = XLSX.utils.json_to_sheet(rows);
-      ws['!cols'] = [16, 24, 20, 16, 18, 17, 17, 30].map(w => ({ wch: w }));
-
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Reset Password');
-      const today = new Date().toISOString().split('T')[0];
-      XLSX.writeFile(wb, `reset-password-${today}.xlsx`);
-      toast.success(`Excel diunduh! ${rows.length} anggota.`);
-    } catch (err) {
-      console.error('Excel error:', err);
-      toast.error('Gagal buat Excel: ' + err.message);
-    }
-  }
-
-  // Tetap sediakan CSV sebagai fallback
   function downloadMassResetCSV(results) {
     const rows = results.map(r => [
       r.user.nickname, r.user.nama_panggilan, r.user.lingkungan,
@@ -624,7 +374,7 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
 
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit flex-wrap">
-        {[{key:'config',label:'⚙️ Konfigurasi'},{key:'users',label:'👥 User & Role'},{key:'passwords',label:'🔑 Kirim Password'},{key:'notif',label:'📢 Notifikasi'},{key:'audit',label:'📋 Audit Log'}].map(t => (
+        {[{key:'config',label:'⚙️ Konfigurasi'},{key:'users',label:'👥 User & Role'},{key:'passwords',label:'🔑 Kirim Password'},{key:'audit',label:'📋 Audit Log'}].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${tab===t.key?'bg-white text-brand-800 shadow-sm':'text-gray-500'}`}>
             {t.label}
@@ -664,82 +414,53 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
       {/* Users tab */}
       {tab === 'users' && (
         <div className="space-y-4">
-          {/* Provision + Mass Reset */}
-          <div className="card border-red-100 bg-red-50/30 space-y-4">
+          {/* Mass password reset */}
+          <div className="card border-red-100 bg-red-50/30 space-y-3">
             <h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm">
-              <KeyRound size={15}/> Provision & Reset Password
+              <KeyRound size={15}/> Reset Password Massal
             </h3>
-
-            {/* Test Edge Function */}
-            <EdgeFunctionStatus supabase={supabase}/>
-
-            {/* PROVISION — buat akun baru untuk yang belum punya */}
-            <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 space-y-2">
-              <p className="text-xs font-semibold text-blue-800">
-                🆕 Langkah 1 (pertama kali / ada anggota baru): Provision Akun
-              </p>
-              <p className="text-xs text-blue-700">
-                Buat akun login untuk semua anggota yang belum punya. Password otomatis di-generate acak.
-                Anggota lama yang sudah punya akun akan di-reset passwordnya.
-              </p>
-              <button onClick={provisionAllAccounts} disabled={massLoading}
-                className="btn-primary gap-2 bg-blue-600 hover:bg-blue-700 border-blue-600">
-                <Users size={15}/>
-                {massLoading ? 'Memproses...' : '🚀 Provision Semua Akun'}
-              </button>
-            </div>
-
-            {/* RESET — hanya reset password, akun sudah ada */}
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-red-800">
-                🔑 Langkah 2 (opsional): Reset Password Saja
-              </p>
-              <p className="text-xs text-red-700">
-                Hanya reset password semua akun yang sudah ada. Tidak membuat akun baru.
-              </p>
+            <p className="text-xs text-red-700">
+              Reset password semua anggota sekaligus. Cocok untuk deployment pertama kali.
+              Setiap anggota wajib mengganti password saat login berikutnya.
+            </p>
+            <div className="flex gap-3 flex-wrap items-center">
               <button onClick={massResetAllPasswords} disabled={massLoading}
-                className="btn-danger gap-2">
+                className="btn-danger gap-2 transition-all hover:scale-105 active:scale-95">
                 <KeyRound size={15}/>
-                {massLoading ? 'Mereset...' : `Reset Password (${users.filter(u=>u.status==='Active').length} anggota)`}
+                {massLoading ? 'Mereset...' : `🔑 Reset Semua (${users.filter(u=>u.status==='Active').length} anggota aktif)`}
               </button>
-            </div>
-
-            {massResults.length > 0 && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs text-gray-600 font-medium">
-                    ✅ {massResults.filter(r=>r.ok).length} berhasil
-                    {massResults.filter(r=>!r.ok).length > 0 && ` · ❌ ${massResults.filter(r=>!r.ok).length} gagal`}
+              {massResults.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500">
+                    ✅ {massResults.filter(r=>r.ok).length} berhasil · ❌ {massResults.filter(r=>!r.ok).length} gagal
                   </span>
-                  <button onClick={() => downloadMassResetExcel(massResults)}
-                    className="btn-primary btn-sm gap-1 text-xs">
-                    <FileSpreadsheet size={13}/> Excel
-                  </button>
                   <button onClick={() => downloadMassResetCSV(massResults)}
-                    className="btn-outline btn-sm gap-1 text-xs">
-                    📥 CSV
+                    className="btn-outline btn-sm gap-1 text-xs transition-all hover:scale-105">
+                    📥 Unduh CSV
                   </button>
                 </div>
-                <div className="overflow-x-auto max-h-64 border border-red-100 rounded-xl">
-                  <table className="tbl text-xs">
-                    <thead><tr><th>Nama</th><th>Username</th><th>Password Baru</th><th>HP Ortu</th><th>WA</th></tr></thead>
-                    <tbody>
-                      {massResults.map((r,i) => (
-                        <tr key={i} className={r.ok ? '' : 'bg-red-50'}>
-                          <td className="font-medium">{r.user.nama_panggilan}</td>
-                          <td className="font-mono text-gray-600">{r.user.nickname}</td>
-                          <td>{r.ok ? <code className="bg-gray-100 px-2 py-0.5 rounded font-bold text-brand-800">{r.password}</code> : <span className="text-red-500">❌ {r.error}</span>}</td>
-                          <td className="text-gray-500 text-xs">{r.user.hp_ortu || r.user.hp_anak || '—'}</td>
-                          <td>{r.ok && (r.user.hp_ortu||r.user.hp_anak) && (
-                            <button onClick={() => openWA(r.user, r.password)} className="btn-primary btn-sm gap-1 text-xs">
-                              <MessageCircle size={12}/> WA
-                            </button>
-                          )}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              )}
+            </div>
+            {massResults.length > 0 && (
+              <div className="overflow-x-auto max-h-64 border border-red-100 rounded-xl">
+                <table className="tbl text-xs">
+                  <thead><tr><th>Nama</th><th>Username</th><th>Password Baru</th><th>HP Ortu</th><th>WA</th></tr></thead>
+                  <tbody>
+                    {massResults.map((r,i) => (
+                      <tr key={i} className={r.ok ? '' : 'bg-red-50'}>
+                        <td className="font-medium">{r.user.nama_panggilan}</td>
+                        <td className="font-mono text-gray-600">{r.user.nickname}</td>
+                        <td>{r.ok ? <code className="bg-gray-100 px-2 py-0.5 rounded font-bold text-brand-800">{r.password}</code> : <span className="text-red-500">❌ {r.error}</span>}</td>
+                        <td className="text-gray-500 text-xs">{r.user.hp_ortu || r.user.hp_anak || '—'}</td>
+                        <td>{r.ok && (r.user.hp_ortu||r.user.hp_anak) && (
+                          <button onClick={() => openWA(r.user, r.password)} className="btn-primary btn-sm gap-1 text-xs transition-all hover:scale-105 active:scale-95">
+                            <MessageCircle size={12}/> WA
+                          </button>
+                        )}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
@@ -893,12 +614,12 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
               members={pwUsers}
               genPassword={genPassword}
               onReset={async (userId, pw) => {
-                try {
-                  await resetPasswordViaEdge(supabase, userId, pw);
-                  return { ok: true };
-                } catch (e) {
-                  return { ok: false, error: e.message };
-                }
+                const { data, error } = await supabase.rpc('admin_reset_password', {
+                  p_user_id: userId, p_new_password: pw,
+                });
+                if (error) return { ok: false, error: error.message };
+                if (data?.ok === false) return { ok: false, error: data.error };
+                return { ok: true };
               }}
             />
           </div>
@@ -940,10 +661,6 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
         </div>
       )}
 
-      {tab === 'notif' && (
-        <NotifAdminTab/>
-      )}
-
       {tab === 'audit' && (
         <div className="card overflow-hidden p-0">
           <div className="overflow-x-auto max-h-[60vh]">
@@ -974,114 +691,6 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// ── Komponen: Status Edge Function ────────────────────────────
-// Tampil di atas bagian reset password — bantu diagnosa jika EF belum deploy
-function EdgeFunctionStatus({ supabase }) {
-  const [status, setStatus] = React.useState(null);
-  const [detail, setDetail] = React.useState('');
-
-  async function checkEdgeFunction() {
-    setStatus('checking'); setDetail('');
-    try {
-      // Kirim POST dengan mode khusus "ping" — tidak butuh auth, cukup cek EF hidup
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-        },
-        body: JSON.stringify({ mode: 'ping' }),
-      });
-
-      const text = await res.text();
-
-      if (res.status === 404 || text.includes('Function not found') || text.includes('Not Found')) {
-        setStatus('error');
-        setDetail('Edge Function belum di-deploy di Supabase.');
-        return;
-      }
-
-      // Kalau dapat response apapun (401, 403, 200) — EF sudah ada
-      // 401 = EF ada tapi butuh auth (normal)
-      setStatus('ok');
-      setDetail(`Edge Function aktif (HTTP ${res.status}). Reset password siap digunakan.`);
-
-    } catch (e) {
-      // "Failed to fetch" bisa berarti CORS atau network — bukan berarti EF tidak ada
-      // Coba verifikasi via supabase client langsung
-      try {
-        const { data: sessionData } = await supabase.auth.refreshSession();
-        const token = sessionData?.session?.access_token;
-        if (!token) throw new Error('no token');
-
-        const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
-        const res2 = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-          },
-          body: JSON.stringify({ mode: 'ping' }),
-        });
-        const text2 = await res2.text();
-        if (res2.status === 404 || text2.includes('Not Found')) {
-          setStatus('error');
-          setDetail('Edge Function belum di-deploy.');
-        } else {
-          setStatus('ok');
-          setDetail(`Edge Function aktif (HTTP ${res2.status}).`);
-        }
-      } catch (e2) {
-        setStatus('error');
-        setDetail(`Tidak bisa terhubung: ${e2.message}. Pastikan VITE_SUPABASE_URL benar.`);
-      }
-    }
-  }
-
-  return (
-    <div className={`p-3 rounded-xl border text-xs space-y-2
-      ${status === 'ok' ? 'bg-green-50 border-green-200'
-      : status === 'error' ? 'bg-red-50 border-red-200'
-      : 'bg-gray-50 border-gray-200'}`}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${
-            status === 'ok' ? 'bg-green-500'
-            : status === 'error' ? 'bg-red-500'
-            : status === 'checking' ? 'bg-yellow-400 animate-pulse'
-            : 'bg-gray-300'}`}/>
-          <span className="font-medium text-gray-700">
-            {status === null && 'Edge Function: klik Cek untuk verifikasi'}
-            {status === 'checking' && 'Mengecek…'}
-            {status === 'ok' && '✅ Edge Function: Aktif'}
-            {status === 'error' && '❌ Edge Function: Belum di-deploy'}
-          </span>
-        </div>
-        <button onClick={checkEdgeFunction} disabled={status === 'checking'}
-          className="btn-outline btn-sm text-xs px-2 py-1">
-          {status === 'checking' ? '…' : 'Cek'}
-        </button>
-      </div>
-      {detail && <p className="text-gray-600">{detail}</p>}
-
-      {/* Panduan deploy selalu tampil */}
-      <div className="bg-white rounded-lg p-2.5 border border-gray-200 space-y-1.5 mt-1">
-        <p className="font-semibold text-gray-700 text-xs">📋 Cara deploy + setup (wajib):</p>
-        <ol className="list-decimal list-inside space-y-1 text-gray-600 text-xs">
-          <li>Supabase Dashboard → <strong>Edge Functions</strong> → klik <code className="bg-gray-100 px-1 rounded">admin-reset-password</code></li>
-          <li>Klik <strong>Deploy</strong> ulang dengan kode terbaru dari ZIP</li>
-          <li className="text-red-700 font-semibold">⚠️ Buka tab <strong>Settings</strong> → NONAKTIFKAN <strong>"Enforce JWT Verification"</strong></li>
-          <li>Tab <strong>Secrets</strong> → tambah: <code className="bg-gray-100 px-1 rounded">SIGMA_SECRET</code> = nilai dari <code className="bg-gray-100 px-1 rounded">VITE_SIGMA_SECRET</code> di Vercel</li>
-          <li>Vercel → Settings → Environment Variables → tambah <code className="bg-gray-100 px-1 rounded">VITE_SIGMA_SECRET</code> = string acak (sama dengan langkah 4)</li>
-          <li>Redeploy Vercel → klik <strong>Cek</strong> di sini</li>
-        </ol>
-      </div>
     </div>
   );
 }

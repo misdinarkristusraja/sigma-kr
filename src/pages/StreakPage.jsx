@@ -1,525 +1,208 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Flame, Lock, RefreshCw, Search, Download, ChevronDown, ChevronUp, Trophy, Users } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
-import { id as localeId } from 'date-fns/locale';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { downloadCSV } from '../lib/utils';
-import * as XLSX from 'xlsx';
+import { Flame, Trophy, Star, Lock } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+const PUBLISH_DATE = new Date('2026-04-15');
+const IS_PUBLISHED = new Date() >= PUBLISH_DATE;
+
+function StreakBadge({ streak }) {
+  if (streak >= 20) return { label: '🏆 Legenda', color: 'text-yellow-600 bg-yellow-50', desc: '20+ minggu berturut-turut' };
+  if (streak >= 12) return { label: '💎 Master',  color: 'text-blue-600 bg-blue-50',    desc: '12+ minggu' };
+  if (streak >= 8)  return { label: '🔥 Pro',     color: 'text-orange-600 bg-orange-50', desc: '8+ minggu' };
+  if (streak >= 4)  return { label: '⭐ Aktif',   color: 'text-green-600 bg-green-50',  desc: '4+ minggu' };
+  if (streak >= 1)  return { label: '🌱 Mulai',   color: 'text-teal-600 bg-teal-50',   desc: '1-3 minggu' };
+  return                    { label: '💤 Belum',   color: 'text-gray-400 bg-gray-50',   desc: 'Belum ada streak' };
+}
+
 export default function StreakPage() {
-  const { user, isAdmin, isPengurus } = useAuth();
-  const canAdmin = isAdmin || isPengurus;
+  const { profile, isPengurus } = useAuth();
+  const [myStreak,     setMyStreak]     = useState(null);
+  const [leaderboard,  setLeaderboard]  = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [recalcLoading,setRecalcLoad]   = useState(false);
 
-  const [enabled,     setEnabled]     = useState(false);
-  const [myStreak,    setMyStreak]    = useState(null);
-  const [myBadges,    setMyBadges]    = useState([]);
-  const [allBadges,   setAllBadges]   = useState([]);
-  const [leaderboard, setLeaderboard] = useState([]);
-  const [allMembers,  setAllMembers]  = useState([]); // admin only
-  const [loading,     setLoading]     = useState(true);
-  const [recalcing,   setRecalcing]   = useState(false);
-  const [search,      setSearch]      = useState('');
-  const [sortBy,      setSortBy]      = useState('current_streak');
-  const [sortDir,     setSortDir]     = useState('desc');
-  const [tab, setTab] = useState('mystreak'); // mystreak | leaderboard | badges | admin
+  useEffect(() => {
+    if (profile?.id) loadData();
+  }, [profile?.id]);
 
-  const fetchData = useCallback(async () => {
+  async function loadData() {
     setLoading(true);
-    try {
-      const { data: cfg } = await supabase
-        .from('system_config').select('value')
-        .eq('key', 'streak_feature_enabled').single();
-      const on = cfg?.value === 'true' || canAdmin;
-      setEnabled(on);
-      if (!on) { setLoading(false); return; }
-
-      const promises = [
-        supabase.from('user_streaks').select('*').eq('user_id', user.id).single(),
-        supabase.from('user_badges')
-          .select('*, badge:streak_badges(*)')
-          .eq('user_id', user.id)
-          .order('diraih_pada', { ascending: false }),
-        supabase.from('streak_badges').select('*').order('urutan'),
-        supabase.from('user_streaks')
-          .select('*, user:users(id, nama_panggilan, nickname, lingkungan)')
-          .order('current_streak', { ascending: false })
-          .limit(20),
-      ];
-
-      // Admin: ambil SEMUA anggota + streak mereka
-      if (canAdmin) {
-        promises.push(
-          supabase.from('users')
-            .select(`
-              id, nama_panggilan, nickname, lingkungan, pendidikan, status,
-              streak:user_streaks(current_streak, longest_streak, total_hadir_wajib,
-                streak_broken_count, last_attended_date, updated_at),
-              badges:user_badges(badge:streak_badges(kode, nama, icon))
-            `)
-            .in('role', ['Misdinar_Aktif', 'Misdinar_Retired'])
-            .eq('status', 'Active')
-            .order('nama_panggilan')
-        );
-      }
-
-      const results = await Promise.all(promises);
-      const [s, b, ab, board, membersRes] = results;
-
-      setMyStreak(s.data || null);
-      setMyBadges((b.data || []).map(x => x.badge ? { ...x.badge, diraih_pada: x.diraih_pada } : null).filter(Boolean));
-      setAllBadges(ab.data || []);
-      setLeaderboard(board.data || []);
-      if (canAdmin && membersRes) {
-        setAllMembers((membersRes.data || []).map(m => ({
-          ...m,
-          streak: Array.isArray(m.streak) ? m.streak[0] : m.streak,
-          badges: m.badges || [],
-        })));
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    const [{ data: myStr }, { data: lb }] = await Promise.all([
+      supabase.from('streaks').select('*').eq('user_id', profile.id).maybeSingle(),
+      supabase.from('streaks')
+        .select('*, users(nama_panggilan, lingkungan, nickname)')
+        .eq('is_published', true)
+        .order('current_streak', { ascending: false })
+        .limit(20),
+    ]);
+    setMyStreak(myStr);
+    setLeaderboard(lb || []);
     setLoading(false);
-  }, [user?.id, canAdmin]);
+  }
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  async function recalculate() {
+    setRecalcLoad(true);
+    const { error } = await supabase.rpc('recalculate_streaks');
+    if (error) { toast.error('Gagal: ' + error.message); }
+    else { toast.success('Streak berhasil dihitung ulang!'); await loadData(); }
+    setRecalcLoad(false);
+  }
 
-  const handleRecalc = async () => {
-    setRecalcing(true);
-    const { data, error } = await supabase.rpc('recalculate_all_streaks');
-    setRecalcing(false);
-    if (error) { toast.error('Gagal recalculate'); return; }
-    toast.success(data || 'Streak diperbarui');
-    fetchData();
-  };
+  async function togglePublish() {
+    const newVal = !myStreak?.is_published;
+    await supabase.from('streaks').upsert({
+      user_id: profile.id,
+      is_published: newVal,
+      current_streak: myStreak?.current_streak || 0,
+      longest_streak: myStreak?.longest_streak || 0,
+    }, { onConflict: 'user_id' });
+    await loadData();
+    toast.success(newVal ? 'Streak dipublikasikan!' : 'Streak disembunyikan');
+  }
 
-  // ── Export Excel semua streak anggota (admin) ──────────────────
-  const handleExportExcel = () => {
-    if (!filteredMembers.length) { toast.error('Tidak ada data'); return; }
-    try {
-      const rows = filteredMembers.map(m => {
-        const s = m.streak;
-        return {
-          'Nama':              m.nama_panggilan,
-          'Username':          m.nickname,
-          'Lingkungan':        m.lingkungan || '',
-          'Streak Aktif':      s?.current_streak    ?? 0,
-          'Streak Terpanjang': s?.longest_streak    ?? 0,
-          'Total Hadir Wajib': s?.total_hadir_wajib ?? 0,
-          'Streak Putus':      s?.streak_broken_count ?? 0,
-          'Badge':             m.badges.map(b => b.badge?.nama).filter(Boolean).join(', '),
-          'Terakhir Hadir':    s?.last_attended_date
-            ? format(parseISO(s.last_attended_date), 'd MMM yyyy', { locale: localeId })
-            : '—',
-        };
-      });
-      const ws = XLSX.utils.json_to_sheet(rows);
-      ws['!cols'] = [22, 16, 20, 12, 16, 16, 12, 32, 15].map(w => ({ wch: w }));
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Streak Anggota');
-      XLSX.writeFile(wb, `streak-anggota-${format(new Date(),'yyyyMMdd')}.xlsx`);
-      toast.success(`Excel diunduh! ${rows.length} anggota.`);
-    } catch (err) {
-      console.error('Excel error:', err);
-      toast.error('Gagal export Excel: ' + err.message);
-    }
-  };
+  const badge = StreakBadge({ streak: myStreak?.current_streak || 0 });
 
-  if (!loading && !enabled) {
+  // Hidden until publish date — admin can see
+  if (!IS_PUBLISHED && !isPengurus) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-center px-4">
-        <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
-          <Lock size={28} className="text-gray-400"/>
-        </div>
-        <h2 className="font-bold text-gray-700 text-lg mb-1">Fitur Segera Hadir</h2>
-        <p className="text-sm text-gray-500 max-w-xs">
-          Fitur Streak & Gamifikasi akan diluncurkan pertengahan April.
-          Terus hadir dan kumpulkan streak kamu!
+      <div className="card text-center py-16 space-y-3">
+        <Lock size={48} className="mx-auto text-gray-300"/>
+        <h2 className="font-bold text-xl text-gray-700">Fitur Segera Hadir</h2>
+        <p className="text-gray-400 text-sm">
+          Sistem gamifikasi streak akan diluncurkan pada <strong>15 April 2026</strong> 🎉
         </p>
+        <p className="text-xs text-gray-300">Terus semangat hadir tugas & latihan!</p>
       </div>
     );
   }
 
-  if (loading) return <div className="card py-12 text-center text-gray-400">Memuat…</div>;
-
-  const myEarnedIds = new Set(myBadges.map(b => b.id));
-  const cur     = myStreak?.current_streak    ?? 0;
-  const longest = myStreak?.longest_streak   ?? 0;
-  const total   = myStreak?.total_hadir_wajib ?? 0;
-  const isHot   = cur >= 4;
-  const isMid   = cur >= 2;
-  const flameColor = cur === 0 ? '#d1d5db' : isHot ? '#f97316' : isMid ? '#fb923c' : '#fbbf24';
-
-  const MILESTONES = [2, 4, 8, 12, 26];
-  const nextM = MILESTONES.find(m => m > cur) || 26;
-  const prevM = MILESTONES.filter(m => m <= cur).pop() || 0;
-  const pct   = nextM > prevM ? Math.min(100, Math.round((cur - prevM) / (nextM - prevM) * 100)) : 100;
-
-  // Sort & filter untuk admin tab
-  const filteredMembers = allMembers
-    .filter(m => !search || m.nama_panggilan?.toLowerCase().includes(search.toLowerCase())
-      || m.nickname?.toLowerCase().includes(search.toLowerCase())
-      || m.lingkungan?.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => {
-      const va = a.streak?.[sortBy] ?? 0;
-      const vb = b.streak?.[sortBy] ?? 0;
-      return sortDir === 'desc' ? vb - va : va - vb;
-    });
-
-  function toggleSort(col) {
-    if (sortBy === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
-    else { setSortBy(col); setSortDir('desc'); }
-  }
-  function SortIcon({ col }) {
-    if (sortBy !== col) return <ChevronDown size={12} className="text-gray-300"/>;
-    return sortDir === 'desc'
-      ? <ChevronDown size={12} className="text-brand-700"/>
-      : <ChevronUp size={12} className="text-brand-700"/>;
-  }
-
-  const tabs = [
-    { key: 'mystreak',    label: 'Badge Saya' },
-    { key: 'leaderboard', label: '🏆 Leaderboard' },
-    { key: 'badges',      label: 'Semua Badge' },
-    ...(canAdmin ? [{ key: 'admin', label: '👥 Semua Anggota' }] : []),
-  ];
-
   return (
     <div className="space-y-5">
-      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="page-title flex items-center gap-2">
-            <Flame size={22} className="text-orange-500"/> Streak & Gamifikasi
-          </h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Hadir terus-menerus untuk membangun streak dan meraih badge!
-          </p>
+          <h1 className="page-title">🔥 Streak & Gamifikasi</h1>
+          <p className="page-subtitle">Hadir tugas + latihan tanpa bolong = streak makin panjang!</p>
         </div>
-        {canAdmin && (
-          <button onClick={handleRecalc} disabled={recalcing} className="btn-outline gap-2">
-            <RefreshCw size={14} className={recalcing ? 'animate-spin' : ''}/>
-            {recalcing ? 'Menghitung…' : 'Hitung Ulang Streak'}
+        {!IS_PUBLISHED && isPengurus && (
+          <span className="badge-yellow text-xs px-3 py-1">Preview — Publish 15 April 2026</span>
+        )}
+        {isPengurus && (
+          <button onClick={recalculate} disabled={recalcLoading}
+            className="btn-outline gap-2 text-sm transition-all hover:scale-105 active:scale-95">
+            <Flame size={15}/> {recalcLoading ? 'Menghitung...' : 'Hitung Ulang Semua'}
           </button>
         )}
       </div>
 
-      {/* Hero Card */}
-      <div className="rounded-2xl overflow-hidden"
-        style={{ background: 'linear-gradient(135deg, #7f0000 0%, #b91c1c 100%)' }}>
-        <div className="px-5 py-6 text-white">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-red-200 text-sm font-medium mb-1">Streak Kamu Saat Ini</p>
-              <div className="flex items-end gap-2">
-                <span className="text-5xl font-black">{cur}</span>
-                <span className="text-red-200 text-lg mb-1">minggu</span>
-              </div>
-              {cur > 0 && (
-                <p className="text-red-200 text-xs mt-1">
-                  {isHot ? '🔥 On fire! Jangan putus sekarang!'
-                   : `${nextM - cur} minggu lagi ke milestone ${nextM}`}
-                </p>
-              )}
-              {myStreak?.last_attended_date && (
-                <p className="text-red-300 text-xs mt-0.5">
-                  Terakhir hadir: {format(parseISO(myStreak.last_attended_date), 'd MMMM yyyy', { locale: localeId })}
-                </p>
-              )}
-            </div>
-            <div className="relative">
-              <span className="text-6xl" style={{ filter: cur === 0 ? 'grayscale(1)' : 'none' }}>🔥</span>
-              {cur > 0 && (
-                <span className={`absolute -bottom-1 -right-1 min-w-[24px] h-[24px]
-                  rounded-full text-white text-xs font-black flex items-center justify-center px-1
-                  ${isHot ? 'bg-orange-500' : 'bg-amber-400'}`}>
-                  {cur}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Progress bar */}
-          {cur > 0 && cur < 26 && (
-            <div className="mt-4">
-              <div className="flex justify-between text-xs text-red-300 mb-1">
-                <span>Menuju {nextM} minggu</span>
-                <span>{cur}/{nextM}</span>
-              </div>
-              <div className="h-2.5 bg-red-900/40 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full transition-all duration-700
-                  ${isHot ? 'bg-orange-400' : 'bg-amber-400'}`}
-                  style={{ width: `${pct}%` }}/>
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-3 gap-3 mt-5">
-            {[
-              { label: 'Streak Terpanjang', value: longest, suffix: 'mgg' },
-              { label: 'Total Hadir Wajib', value: total,   suffix: 'kali' },
-              { label: 'Badge Diraih',      value: myBadges.length, suffix: '' },
-            ].map(s => (
-              <div key={s.label} className="bg-white/15 rounded-xl px-3 py-2.5 text-center">
-                <p className="text-white text-xl font-bold">{s.value}
-                  <span className="text-red-200 text-sm ml-1">{s.suffix}</span>
-                </p>
-                <p className="text-red-200 text-[11px] mt-0.5 leading-tight">{s.label}</p>
-              </div>
-            ))}
-          </div>
+      {loading ? (
+        <div className="grid sm:grid-cols-2 gap-4">
+          {[1,2].map(i => <div key={i} className="skeleton h-40 rounded-2xl"/>)}
         </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="bg-gray-100 rounded-xl p-1 flex gap-1 overflow-x-auto">
-        {tabs.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap
-              ${tab === t.key ? 'bg-white text-brand-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab: Badge Saya */}
-      {tab === 'mystreak' && (
-        <div className="space-y-4">
-          {myBadges.length > 0 && (
-            <div>
-              <h3 className="font-semibold text-gray-700 text-sm mb-2">Badge yang sudah diraih ✅</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {myBadges.map(b => <BadgeCard key={b.id} badge={b} earned diraih={b.diraih_pada}/>)}
-              </div>
-            </div>
-          )}
-          <div>
-            <h3 className="font-semibold text-gray-700 text-sm mb-2">
-              {myBadges.length > 0 ? 'Badge berikutnya 🎯' : 'Badge yang bisa kamu raih 🎯'}
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {allBadges.filter(b => !myEarnedIds.has(b.id)).map(b => (
-                <BadgeCard key={b.id} badge={b} earned={false}
-                  progress={b.syarat_type === 'streak' ? cur : total}
-                  target={b.syarat_nilai}/>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab: Leaderboard */}
-      {tab === 'leaderboard' && (
-        <div className="card p-0 overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
-            <h3 className="font-semibold text-gray-700 text-sm">Streak Aktif Tertinggi (Top 20)</h3>
-          </div>
-          <div className="divide-y divide-gray-50">
-            {leaderboard.map((row, i) => {
-              const isMe = row.user_id === user?.id;
-              return (
-                <div key={row.id}
-                  className={`flex items-center gap-3 px-4 py-3 ${isMe ? 'bg-red-50' : 'hover:bg-gray-50'}`}>
-                  <span className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold shrink-0
-                    ${i===0?'bg-yellow-100 text-yellow-700':i===1?'bg-gray-200 text-gray-600':i===2?'bg-orange-100 text-orange-600':'bg-gray-100 text-gray-500'}`}>
-                    {i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium ${isMe ? 'text-brand-800' : 'text-gray-800'}`}>
-                      {row.user?.nama_panggilan || row.user?.nickname}
-                      {isMe && <span className="ml-1 badge badge-red" style={{fontSize:'10px'}}>Kamu</span>}
-                    </p>
-                    <p className="text-xs text-gray-500">Total hadir: {row.total_hadir_wajib} kali</p>
+      ) : (
+        <>
+          {/* My streak card */}
+          <div className="card bg-gradient-to-br from-orange-50 to-amber-50 border-orange-200 border">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-600 mb-1">Streak Saya</p>
+                <div className="flex items-end gap-3">
+                  <div className="text-5xl font-black text-orange-600">
+                    {myStreak?.current_streak || 0}
                   </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-lg font-black text-brand-800">{row.current_streak}</p>
-                    <p className="text-[10px] text-gray-400">minggu</p>
+                  <div className="pb-1">
+                    <p className="text-sm font-semibold text-gray-700">minggu berturut-turut</p>
+                    <p className="text-xs text-gray-500">Terpanjang: {myStreak?.longest_streak || 0} minggu</p>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Tab: Semua Badge */}
-      {tab === 'badges' && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {allBadges.map(b => (
-            <BadgeCard key={b.id} badge={b}
-              earned={myEarnedIds.has(b.id)}
-              progress={b.syarat_type === 'streak' ? cur : total}
-              target={b.syarat_nilai}/>
-          ))}
-        </div>
-      )}
-
-      {/* Tab: Admin — Semua Anggota */}
-      {tab === 'admin' && canAdmin && (
-        <div className="space-y-4">
-          {/* Toolbar */}
-          <div className="flex flex-wrap gap-3 items-center">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search size={14} className="absolute left-3 top-3 text-gray-400"/>
-              <input value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="Cari nama, username, lingkungan…"
-                className="input pl-9 text-sm"/>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <Users size={14}/> {filteredMembers.length} anggota
-            </div>
-            <button onClick={handleExportExcel}
-              className="btn-outline gap-2 text-sm">
-              <Download size={15}/> Export Excel
-            </button>
-          </div>
-
-          {/* Summary cards */}
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              {
-                label: 'Punya Streak Aktif',
-                value: allMembers.filter(m => (m.streak?.current_streak ?? 0) > 0).length,
-                color: 'text-orange-600', bg: 'bg-orange-50',
-              },
-              {
-                label: 'Streak ≥ 4 Minggu',
-                value: allMembers.filter(m => (m.streak?.current_streak ?? 0) >= 4).length,
-                color: 'text-red-700', bg: 'bg-red-50',
-              },
-              {
-                label: 'Belum Ada Streak',
-                value: allMembers.filter(m => !(m.streak?.current_streak)).length,
-                color: 'text-gray-500', bg: 'bg-gray-50',
-              },
-            ].map(s => (
-              <div key={s.label} className={`card ${s.bg} border-0 py-3`}>
-                <p className={`text-2xl font-black ${s.color}`}>{s.value}</p>
-                <p className="text-xs text-gray-500 mt-0.5">{s.label}</p>
+                <div className={`inline-flex items-center gap-1.5 mt-3 px-3 py-1 rounded-full text-sm font-bold ${badge.color}`}>
+                  <span>{badge.label}</span>
+                  <span className="text-xs font-normal opacity-70">· {badge.desc}</span>
+                </div>
               </div>
-            ))}
-          </div>
+              <div className="flex-shrink-0">
+                <Flame size={64} className={`${(myStreak?.current_streak||0) > 0 ? 'text-orange-400' : 'text-gray-200'}`}/>
+              </div>
+            </div>
 
-          {/* Tabel semua anggota */}
-          <div className="card p-0 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50 text-xs text-gray-500 uppercase border-b border-gray-100">
-                    <th className="text-left px-4 py-3">Nama</th>
-                    <th className="text-left px-4 py-3 hidden sm:table-cell">Lingkungan</th>
-                    <th className="text-center px-3 py-3 cursor-pointer select-none"
-                      onClick={() => toggleSort('current_streak')}>
-                      <span className="flex items-center justify-center gap-1">
-                        Streak <SortIcon col="current_streak"/>
-                      </span>
-                    </th>
-                    <th className="text-center px-3 py-3 cursor-pointer select-none"
-                      onClick={() => toggleSort('longest_streak')}>
-                      <span className="flex items-center justify-center gap-1">
-                        Terpanjang <SortIcon col="longest_streak"/>
-                      </span>
-                    </th>
-                    <th className="text-center px-3 py-3 cursor-pointer select-none"
-                      onClick={() => toggleSort('total_hadir_wajib')}>
-                      <span className="flex items-center justify-center gap-1">
-                        Total Hadir <SortIcon col="total_hadir_wajib"/>
-                      </span>
-                    </th>
-                    <th className="text-center px-3 py-3">Badge</th>
-                    <th className="text-center px-3 py-3 hidden md:table-cell">Terakhir Hadir</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {filteredMembers.map(m => {
-                    const s = m.streak;
-                    const c = s?.current_streak ?? 0;
-                    const hot = c >= 4;
-                    return (
-                      <tr key={m.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-2.5">
-                          <p className="font-medium text-gray-800">{m.nama_panggilan}</p>
-                          <p className="text-xs text-gray-400">@{m.nickname}</p>
-                        </td>
-                        <td className="px-4 py-2.5 text-xs text-gray-500 hidden sm:table-cell">
-                          {m.lingkungan || '—'}
-                        </td>
-                        <td className="px-3 py-2.5 text-center">
-                          <span className={`font-black text-base flex items-center justify-center gap-0.5
-                            ${hot ? 'text-orange-500' : c > 0 ? 'text-amber-500' : 'text-gray-300'}`}>
-                            {c > 0 && <Flame size={14}/>}{c}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 text-center font-semibold text-gray-700">
-                          {s?.longest_streak ?? 0}
-                        </td>
-                        <td className="px-3 py-2.5 text-center">
-                          <span className="font-semibold text-brand-800">{s?.total_hadir_wajib ?? 0}</span>
-                        </td>
-                        <td className="px-3 py-2.5 text-center">
-                          <div className="flex items-center justify-center gap-0.5 flex-wrap">
-                            {m.badges.slice(0,4).map((ub, i) => (
-                              <span key={i} title={ub.badge?.nama} className="text-base">
-                                {ub.badge?.icon || ''}
-                              </span>
-                            ))}
-                            {m.badges.length === 0 && <span className="text-gray-300 text-xs">—</span>}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2.5 text-center text-xs text-gray-500 hidden md:table-cell">
-                          {s?.last_attended_date
-                            ? format(parseISO(s.last_attended_date), 'd MMM yyyy', { locale: localeId })
-                            : '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {filteredMembers.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="text-center py-8 text-gray-400">
-                        {search ? 'Tidak ada anggota cocok dengan pencarian' : 'Belum ada data streak. Klik "Hitung Ulang Streak" terlebih dahulu.'}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+            {myStreak?.last_k1_week && (
+              <p className="text-xs text-gray-400 mt-3">
+                Terakhir hadir: minggu {new Date(myStreak.last_k1_week).toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'})}
+              </p>
+            )}
+
+            {!myStreak?.current_streak && (
+              <div className="mt-3 p-3 bg-orange-100/50 rounded-xl text-xs text-orange-700">
+                💡 Hadiri tugas + latihan minggu ini untuk memulai streak pertamamu!
+                Streak dihitung otomatis dari data rekap.
+              </div>
+            )}
+
+            <div className="mt-3 flex items-center justify-between">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={myStreak?.is_published||false} onChange={togglePublish}
+                  className="w-4 h-4 accent-orange-500"/>
+                <span className="text-xs text-gray-600">Tampilkan di papan peringkat</span>
+              </label>
             </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
-// ── Badge Card ─────────────────────────────────────────────────────────
-function BadgeCard({ badge, earned, diraih, progress = 0, target }) {
-  const pct = target ? Math.min(100, Math.round(progress * 100 / target)) : 0;
-  return (
-    <div className={`rounded-2xl p-3 border-2 text-center transition-all
-      ${earned
-        ? `${badge.warna_bg || 'bg-yellow-50'} border-yellow-200`
-        : 'bg-gray-50 border-gray-200 opacity-60'}`}>
-      <div className="text-3xl mb-1.5">{badge.icon || '🏅'}</div>
-      <p className={`text-xs font-bold leading-tight
-        ${earned ? (badge.warna_text || 'text-yellow-800') : 'text-gray-500'}`}>
-        {badge.nama}
-      </p>
-      <p className="text-[10px] text-gray-400 mt-0.5 leading-tight">{badge.deskripsi}</p>
-      {!earned && target && (
-        <div className="mt-2">
-          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-            <div className="h-full bg-brand-700 rounded-full" style={{ width: `${pct}%` }}/>
+          {/* How streak works */}
+          <div className="card bg-gray-50 space-y-2">
+            <h3 className="font-semibold text-gray-700 text-sm">📋 Cara Streak Dihitung</h3>
+            <div className="grid sm:grid-cols-2 gap-2 text-xs text-gray-600">
+              <div className="bg-white rounded-xl p-3">
+                <p className="font-semibold text-green-700">✅ Menambah streak:</p>
+                <p>K1 (Hadir Tugas + Latihan) atau K3 (Hadir Tugas) tiap minggu berturut-turut</p>
+              </div>
+              <div className="bg-white rounded-xl p-3">
+                <p className="font-semibold text-red-700">❌ Memutus streak:</p>
+                <p>Melewatkan 1 minggu tanpa hadir tugas (K5, K6, atau tidak dijadwalkan)</p>
+              </div>
+              <div className="bg-white rounded-xl p-3">
+                <p className="font-semibold text-blue-700">🔄 Kapan dihitung:</p>
+                <p>Otomatis diperbarui setelah Pengurus klik "Hitung Ulang Semua"</p>
+              </div>
+              <div className="bg-white rounded-xl p-3">
+                <p className="font-semibold text-purple-700">🏆 Badge tier:</p>
+                <p>1+ Mulai · 4+ Aktif · 8+ Pro · 12+ Master · 20+ Legenda</p>
+              </div>
+            </div>
           </div>
-          <p className="text-[10px] text-gray-400 mt-0.5">{progress}/{target}</p>
-        </div>
-      )}
-      {earned && diraih && (
-        <p className="text-[10px] text-gray-400 mt-1">
-          {format(new Date(diraih), 'd MMM yyyy', { locale: localeId })}
-        </p>
+
+          {/* Leaderboard */}
+          {leaderboard.length > 0 && (
+            <div className="card overflow-hidden p-0">
+              <div className="px-4 py-3 border-b border-gray-100">
+                <h3 className="font-semibold text-gray-700">🏆 Papan Streak Terpanjang</h3>
+              </div>
+              <div className="divide-y divide-gray-50">
+                {leaderboard.map((s, i) => {
+                  const b = StreakBadge({ streak: s.current_streak });
+                  const isMe = s.user_id === profile.id;
+                  return (
+                    <div key={s.id} className={`flex items-center gap-3 px-4 py-3 ${isMe ? 'bg-orange-50/50' : ''}`}>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-sm ${
+                        i===0?'bg-yellow-400 text-white':i===1?'bg-gray-300 text-gray-700':i===2?'bg-amber-600 text-white':'bg-gray-100 text-gray-500'
+                      }`}>{i+1}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-gray-900 text-sm">{s.users?.nama_panggilan}</p>
+                        <p className="text-xs text-gray-400">{s.users?.lingkungan}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className={`font-black text-lg text-orange-600`}>{s.current_streak}🔥</p>
+                        <p className={`text-[10px] font-bold ${b.color} px-1.5 py-0.5 rounded-full`}>{b.label}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
+  </div>
   );
 }

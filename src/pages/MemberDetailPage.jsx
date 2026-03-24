@@ -3,7 +3,6 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDate, buildWALink, PENDIDIKAN_OPTIONS, formatHP, STATUS_LABELS, ROLE_LABELS } from '../lib/utils';
-import { StreakMiniCard } from '../components/ui/StreakWidget';
 import {
   ArrowLeft, CreditCard, BarChart2, Phone, Edit2, Save, X,
   ShieldAlert, ShieldCheck, KeyRound, MessageCircle,
@@ -125,24 +124,13 @@ export default function MemberDetailPage() {
     if (!confirm(`Reset password ${member.nama_panggilan} ke password baru?`)) return;
     setResetting(true);
     try {
-      // Gunakan Edge Function admin-reset-password (Supabase Admin API)
-      const secret = import.meta.env.VITE_SIGMA_SECRET;
-      if (!secret) throw new Error('VITE_SIGMA_SECRET belum di-set di Vercel env vars');
-
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-        },
-        body: JSON.stringify({ mode: 'reset', user_id: id, new_password: newPw, secret }),
+      // Gunakan RPC admin_reset_password (SECURITY DEFINER — bypass anon key restriction)
+      const { data, error } = await supabase.rpc('admin_reset_password', {
+        p_user_id:      id,
+        p_new_password: newPw,
       });
-      const text = await res.text();
-      let result;
-      try { result = JSON.parse(text); }
-      catch { throw new Error(res.status === 404 ? 'Edge Function belum di-deploy' : `HTTP ${res.status}`); }
-      if (!result.ok) throw new Error(result.error || 'Reset gagal');
+      if (error) throw error;
+      if (data?.ok === false) throw new Error(data.error);
 
       setLastPwForWA(newPw);
       toast.success(`Password ${member.nama_panggilan} berhasil direset!`);
@@ -236,9 +224,8 @@ export default function MemberDetailPage() {
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
         {[
-          { key: 'data',   label: '👤 Data Diri' },
-          { key: 'streak', label: '🔥 Streak' },
-          { key: 'akun',   label: '🔑 Akun & WA' },
+          { key: 'data', label: '👤 Data Diri' },
+          { key: 'akun', label: '🔑 Akun & WA' },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${tab===t.key?'bg-white text-brand-800 shadow-sm':'text-gray-500'}`}>
@@ -286,11 +273,6 @@ export default function MemberDetailPage() {
             )}
           </div>
         </div>
-      )}
-
-      {/* ─── TAB STREAK ─── */}
-      {tab === 'streak' && (
-        <StreakMiniCard userId={member?.id}/>
       )}
 
       {/* ─── TAB AKUN & WA ─── */}
@@ -431,5 +413,6 @@ Mohon login... (dst)`
         )}
       </div>
     </div>
+  </div>
   );
 }

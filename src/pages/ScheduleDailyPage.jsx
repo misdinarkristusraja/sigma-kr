@@ -7,10 +7,9 @@ import { toPng } from 'html-to-image';
 import {
   CalendarDays, Download, Zap, ChevronLeft, ChevronRight,
   Bell, CheckCircle, XCircle, Clock, RefreshCw, Users,
-  AlertTriangle, FileEdit, Globe, Check, X, Edit2, Search, Church, CalendarPlus,
+  AlertTriangle, FileEdit, Globe, Check, X, Edit2, Search, Church,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { exportToGCal } from '../lib/calendarExport';
 
 const MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 const HARI   = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
@@ -581,145 +580,46 @@ export function ScheduleDailyPage() {
 export function PublicSchedulePage() {
   const [events, setEvents] = useState([]);
   const [loading, setLoad]  = useState(true);
-
   useEffect(() => {
     supabase.from('events')
-      .select(`
-        id, perayaan, nama_event, tipe_event, tanggal_tugas, tanggal_latihan,
-        warna_liturgi, jumlah_misa, draft_note,
-        pic_slot_1a, pic_slot_1b, pic_slot_2a, pic_slot_2b,
-        pic_slot_3a, pic_slot_3b, pic_slot_4a, pic_slot_4b,
-        pelatih_slot_1, pelatih_slot_2, pelatih_slot_3,
-        assignments(slot_number, position, users(nama_panggilan, lingkungan))
-      `)
+      .select(`*, assignments(slot_number, users(nama_panggilan))`)
       .gte('tanggal_tugas', toLocalISO(new Date()))
       .not('tipe_event','eq','Misa_Harian')
       .eq('is_draft', false)
-      .order('tanggal_tugas')
-      .limit(12)
+      .order('tanggal_tugas').limit(8)
       .then(({ data }) => { setEvents(data||[]); setLoad(false); });
   }, []);
-
-  const SLOT_INFO_PUB = {
-    1: { label: 'Sabtu 17:30',  jam: '17.30' },
-    2: { label: 'Minggu 06:00', jam: '06.00' },
-    3: { label: 'Minggu 08:00', jam: '08.00' },
-    4: { label: 'Minggu 17:30', jam: '17.30' },
-  };
-
-  const LITURGY_DOT = {
-    Hijau:'bg-green-500', Merah:'bg-red-600', Putih:'bg-amber-400',
-    Ungu:'bg-purple-600', MerahMuda:'bg-pink-500', Hitam:'bg-gray-700',
-  };
-
+  const SLOT_LABELS = { 1:'Sabtu 17:30', 2:'Minggu 06:00', 3:'Minggu 08:00', 4:'Minggu 17:30' };
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-brand-800 text-white py-8 px-4 text-center sticky top-0 z-10 shadow-lg">
-        <h1 className="text-2xl font-black tracking-wide">SIGMA</h1>
-        <p className="text-brand-200 text-sm mt-0.5">Jadwal Misdinar Paroki Kristus Raja Solo Baru</p>
-        <p className="text-brand-300 text-xs italic mt-0.5">Serve the Lord with Gladness</p>
+      <div className="bg-brand-800 text-white py-8 px-4 text-center">
+        <h1 className="text-2xl font-black">SIGMA</h1>
+        <p className="text-brand-200 text-sm">Jadwal Misdinar Paroki Kristus Raja Solo Baru</p>
+        <p className="text-brand-300 text-xs italic mt-1">Serve the Lord with Gladness</p>
       </div>
-
-      <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
-        {loading ? (
-          [1,2,3].map(i => <div key={i} className="h-48 rounded-2xl bg-gray-200 animate-pulse"/>)
-        ) : events.length === 0 ? (
-          <div className="text-center py-16 text-gray-400">
-            <p className="font-medium">Belum ada jadwal mendatang yang dipublish</p>
-          </div>
-        ) : events.map(ev => {
-          const isMisaKhusus = ev.tipe_event === 'Misa_Khusus';
-          const nSlots = isMisaKhusus ? (ev.jumlah_misa || 1) : 4;
-          const asgn   = ev.assignments || [];
-          const bySlot = {};
-          for (let s = 1; s <= nSlots; s++) bySlot[s] = asgn.filter(a => a.slot_number === s);
-
-          // Parse jam khusus dari draft_note
-          const jamMap = {};
-          if (isMisaKhusus && ev.draft_note) {
-            const matches = ev.draft_note.matchAll(/Slot (\d+): ([\d.]+)/g);
-            for (const m of matches) jamMap[Number(m[1])] = m[2];
-          }
-
-          const dot = LITURGY_DOT[ev.warna_liturgi] || 'bg-green-500';
-          const pelatihNicks = [ev.pelatih_slot_1, ev.pelatih_slot_2, ev.pelatih_slot_3].filter(Boolean);
-
-          // Subtitle tanggal
-          const subtitleDate = isMisaKhusus
-            ? formatDate(ev.tanggal_tugas, 'EEEE, dd MMMM yyyy')
-            : ev.tanggal_latihan
-              ? `${formatDate(ev.tanggal_latihan,'EEEE, dd MMM')} s/d ${formatDate(ev.tanggal_tugas,'dd MMMM yyyy')}`
-              : formatDate(ev.tanggal_tugas, 'EEEE, dd MMMM yyyy');
-
-          const gridClass = nSlots === 1 ? 'grid-cols-1' : nSlots === 2 ? 'grid-cols-2' : nSlots === 3 ? 'grid-cols-3' : 'grid-cols-2';
-
+      <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
+        {loading ? [1,2,3].map(i=><div key={i} className="skeleton h-40 rounded-xl"/>) :
+         events.map(ev => {
+          const asgn = ev.assignments||[];
           return (
-            <div key={ev.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              {/* Event header */}
-              <div className="px-4 pt-4 pb-3 border-b border-gray-50">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className={`w-2.5 h-2.5 rounded-full ${dot} flex-shrink-0`}/>
-                  <span className="text-xs text-gray-400">{ev.warna_liturgi}</span>
-                </div>
-                <h3 className="font-bold text-gray-900 text-base leading-tight">{ev.perayaan || ev.nama_event}</h3>
-                <p className="text-xs text-gray-500 mt-0.5">{subtitleDate}</p>
-
-                {/* Pelatih piket */}
-                {pelatihNicks.length > 0 && (
-                  <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                    <span className="text-[10px] text-teal-600 font-medium">🧑‍🏫 Pelatih:</span>
-                    {pelatihNicks.map(n => (
-                      <span key={n} className="text-[10px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full">{n}</span>
-                    ))}
+            <div key={ev.id} className="card">
+              <h3 className="font-bold text-gray-900">{ev.perayaan||ev.nama_event}</h3>
+              <p className="text-sm text-gray-500 mb-3">{formatDate(ev.tanggal_tugas,'EEEE, dd MMMM yyyy')}</p>
+              {[1,2,3,4].map(slot => {
+                const names = asgn.filter(a=>a.slot_number===slot).map(a=>a.users?.nama_panggilan);
+                return names.length ? (
+                  <div key={slot} className="flex gap-3 mb-2 text-sm">
+                    <span className="text-gray-400 w-28 flex-shrink-0">{SLOT_LABELS[slot]}</span>
+                    <span className="font-medium">{names.join(' / ')}</span>
                   </div>
-                )}
-              </div>
-
-              {/* Slot grid */}
-              <div className={`grid ${gridClass} divide-x divide-gray-50`}>
-                {Array.from({length: nSlots}, (_,i) => i+1).map(slot => {
-                  const info    = SLOT_INFO_PUB[slot] || SLOT_INFO_PUB[1];
-                  const picA    = ev[`pic_slot_${slot}a`];
-                  const picB    = ev[`pic_slot_${slot}b`];
-                  const people  = bySlot[slot] || [];
-                  const jamLabel = isMisaKhusus && jamMap[slot] ? jamMap[slot] : info.jam;
-                  return (
-                    <div key={slot} className="p-3">
-                      <div className="mb-2">
-                        <p className="text-[11px] font-bold text-gray-600">
-                          {isMisaKhusus ? `Misa ${slot} (${jamLabel})` : info.label}
-                        </p>
-                        {(picA || picB) && (
-                          <p className="text-[10px] text-brand-700 mt-0.5">
-                            PIC: {[picA,picB].filter(Boolean).join(' & ')}
-                          </p>
-                        )}
-                      </div>
-                      <div className="space-y-0.5">
-                        {people.length === 0 ? (
-                          <p className="text-[10px] text-gray-300 italic">—</p>
-                        ) : people.map((a, i) => (
-                          <div key={i} className="flex items-baseline gap-1">
-                            <span className="text-[9px] text-gray-300 shrink-0">{i+1}.</span>
-                            <div>
-                              <p className="text-[11px] font-medium text-gray-800 leading-none">{a.users?.nama_panggilan}</p>
-                              <p className="text-[9px] text-gray-400">{a.users?.lingkungan}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                ) : null;
+              })}
             </div>
           );
         })}
-
-        <div className="text-center pt-4 pb-6 space-y-2">
-          <a href="/login" className="btn-primary block max-w-xs mx-auto">Login ke SIGMA</a>
-          <p className="text-xs text-gray-400">Daftar? <a href="/daftar" className="text-brand-800 underline">Klik di sini</a></p>
+        <div className="text-center pt-4">
+          <a href="/login" className="btn-primary">Login ke SIGMA</a>
+          <p className="text-xs text-gray-400 mt-3">Daftar? <a href="/daftar" className="text-brand-800 underline">Klik di sini</a></p>
         </div>
       </div>
     </div>
@@ -736,7 +636,10 @@ export function NotFoundPage() {
         <a href="/dashboard" className="bg-white text-brand-800 font-bold px-6 py-3 rounded-xl">Kembali</a>
       </div>
     </div>
-  );
+    </div>
+  </div>
+  </div>
+);
 }
 
 export default ScheduleDailyPage;

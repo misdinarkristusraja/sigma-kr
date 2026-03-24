@@ -1169,45 +1169,69 @@ export default function ScheduleWeeklyPage() {
                         </p>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-                      {[1,2,3,4].map(slot => {
-                        const curA = picBatch[ev.id]?.[slot]?.a ?? ev[`pic_slot_${slot}a`] ?? '';
-                        const curB = picBatch[ev.id]?.[slot]?.b ?? ev[`pic_slot_${slot}b`] ?? '';
-                        const info = SLOT_INFO[slot];
-                        return (
-                          <div key={slot} className="p-3 bg-gray-50 rounded-xl">
-                            <p className="text-xs font-bold text-gray-600 mb-2">{info.time}</p>
-                            <div className="space-y-2">
-                              <div>
-                                <label className="text-[10px] text-gray-400">PIC 1</label>
-                                <select className="input text-xs mt-0.5" value={curA}
-                                  onChange={e => setPICField(ev.id, slot, 'a', e.target.value)}>
-                                  <option value="">— Pilih —</option>
-                                  {picOptions.map(p => (
-                                    <option key={p.id} value={p.nickname}>{p.nama_panggilan}</option>
-                                  ))}
-                                </select>
+                    {(() => {
+                      // Dinamis: Misa Khusus pakai jumlah_misa, Mingguan pakai 4
+                      const isMK   = ev.tipe_event === 'Misa_Khusus';
+                      const nSlots = isMK ? (ev.jumlah_misa || 1) : 4;
+                      const slots  = Array.from({ length: nSlots }, (_, i) => i + 1);
+                      // Parse jam/tanggal dari draft_note untuk label Misa Khusus
+                      const slotSched = isMK ? parseSlotSchedule(ev.draft_note, ev.tanggal_tugas) : [];
+
+                      return (
+                        <div className={`grid gap-3 ${nSlots <= 2 ? 'grid-cols-2' : nSlots === 3 ? 'grid-cols-3' : 'grid-cols-2 xl:grid-cols-4'}`}>
+                          {slots.map(slot => {
+                            const curA = picBatch[ev.id]?.[slot]?.a ?? ev[`pic_slot_${slot}a`] ?? '';
+                            const curB = picBatch[ev.id]?.[slot]?.b ?? ev[`pic_slot_${slot}b`] ?? '';
+
+                            // Label slot: Misa Khusus → "Misa N · HH.mm (dd MMM)" / Mingguan → SLOT_INFO
+                            let slotLabel;
+                            if (isMK) {
+                              const sc = slotSched.find(s => s.slot === slot);
+                              const jam = sc?.jam || `Slot ${slot}`;
+                              const tgl = sc?.tanggal
+                                ? new Date(sc.tanggal + 'T00:00:00').toLocaleDateString('id-ID',{ day:'numeric', month:'short' })
+                                : '';
+                              slotLabel = `Misa ${slot} · ${jam}${tgl ? ` (${tgl})` : ''}`;
+                            } else {
+                              slotLabel = SLOT_INFO[slot]?.time || `Slot ${slot}`;
+                            }
+
+                            return (
+                              <div key={slot} className="p-3 bg-gray-50 rounded-xl">
+                                <p className="text-xs font-bold text-gray-700 mb-2">{slotLabel}</p>
+                                <div className="space-y-2">
+                                  <div>
+                                    <label className="text-[10px] text-gray-400">PIC 1</label>
+                                    <select className="input text-xs mt-0.5" value={curA}
+                                      onChange={e => setPICField(ev.id, slot, 'a', e.target.value)}>
+                                      <option value="">— Pilih —</option>
+                                      {picOptions.map(p => (
+                                        <option key={p.id} value={p.nickname}>{p.nama_panggilan}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] text-gray-400">PIC 2</label>
+                                    <select className="input text-xs mt-0.5" value={curB}
+                                      onChange={e => setPICField(ev.id, slot, 'b', e.target.value)}>
+                                      <option value="">— Pilih —</option>
+                                      {picOptions.map(p => (
+                                        <option key={p.id} value={p.nickname}>{p.nama_panggilan}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  {(curA||curB) && (
+                                    <p className="text-[10px] text-brand-700 font-medium truncate">
+                                      ✓ {[curA,curB].filter(Boolean).join(' & ')}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
-                              <div>
-                                <label className="text-[10px] text-gray-400">PIC 2</label>
-                                <select className="input text-xs mt-0.5" value={curB}
-                                  onChange={e => setPICField(ev.id, slot, 'b', e.target.value)}>
-                                  <option value="">— Pilih —</option>
-                                  {picOptions.map(p => (
-                                    <option key={p.id} value={p.nickname}>{p.nama_panggilan}</option>
-                                  ))}
-                                </select>
-                              </div>
-                              {(curA||curB) && (
-                                <p className="text-[10px] text-brand-700 font-medium truncate">
-                                  ✓ {[curA,curB].filter(Boolean).join(' & ')}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -2047,5 +2071,9 @@ export default function ScheduleWeeklyPage() {
         </div>
       )}
     </div>
-  );
+    </div>
+  </div>
+  </div>
+  </div>
+);
 }

@@ -280,5 +280,6 @@ export default function ReregistrationPage() {
         </div>
       </form>
     </div>
+  </div>
   );
 }

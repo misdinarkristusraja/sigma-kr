@@ -8,7 +8,6 @@ import {
   Clock, Shield, Keyboard, User,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { processMisaBesarLatihan, isMisaBesarWithLatihanToday } from '../hooks/useMisaBesarScan';
 
 // ─── Konstanta ──────────────────────────────────────────────
 const AUTO_RETURN_SEC  = 4;
@@ -200,25 +199,12 @@ export default function ScanPage() {
 
     // 3. Cari semua event hari ini (tanggal_tugas atau tanggal_latihan = hari ini)
     const today = toLocalISO(new Date());
-    // Query events — is_misa_besar & mode_latihan butuh migration 012 & 013
-    // Fallback gracefully jika kolom belum ada
-    let { data: todayEvents } = await supabase
+    const { data: todayEvents } = await supabase
       .from('events')
-      .select('id, nama_event, tipe_event, tanggal_tugas, tanggal_latihan, perayaan, draft_note, status_event, is_misa_besar, mode_latihan')
+      .select('id, nama_event, tipe_event, tanggal_tugas, tanggal_latihan, perayaan, draft_note, status_event')
       .or(`tanggal_tugas.eq.${today},tanggal_latihan.eq.${today}`)
       .in('status_event', ['Akan_Datang','Berlangsung'])
       .not('is_draft', 'eq', true);
-
-    // Jika kolom baru belum ada, fallback query tanpa kolom tsb
-    if (!todayEvents) {
-      const { data: fallbackEvents } = await supabase
-        .from('events')
-        .select('id, nama_event, tipe_event, tanggal_tugas, tanggal_latihan, perayaan, draft_note, status_event')
-        .or(`tanggal_tugas.eq.${today},tanggal_latihan.eq.${today}`)
-        .in('status_event', ['Akan_Datang','Berlangsung'])
-        .not('is_draft', 'eq', true);
-      todayEvents = (fallbackEvents || []).map(e => ({ ...e, is_misa_besar: false, mode_latihan: 'gabung' }));
-    }
 
     // 4. Validasi: ada event hari ini?
     if (!todayEvents || todayEvents.length === 0) {
@@ -277,74 +263,41 @@ export default function ScanPage() {
       member, parsed, eventId: targetEvent.id, assignmentId,
       isAnomaly, isWalkIn: false, walkInReason: null,
       raw, activeWindows,
-      targetEvent,  // pass full event row untuk Misa Besar detection
     });
   }
 
   // ── Simpan scan record ─────────────────────────────────────
-  async function saveScanRecord({ member, parsed, eventId, assignmentId, isAnomaly, isWalkIn, walkInReason, raw, activeWindows, isAdminOverride, targetEvent }) {
+  async function saveScanRecord({ member, parsed, eventId, assignmentId, isAnomaly, isWalkIn, walkInReason, raw, activeWindows, isAdminOverride }) {
     const scanType = parsed.type === 'latihan'
       ? (isWalkIn ? 'walkin_latihan' : 'latihan')
       : (isWalkIn ? 'walkin_tugas'   : 'tugas');
 
-    // Insert scan record — dapatkan ID untuk diteruskan ke process_misa_besar_scan
-    const { data: scanRow, error } = await supabase
-      .from('scan_records')
-      .insert({
-        user_id:         member.id,
-        event_id:        eventId || null,
-        scanner_user_id: profile?.id,
-        scan_type:       scanType,
-        is_walk_in:      isWalkIn,
-        walkin_reason:   walkInReason,
-        timestamp:       new Date().toISOString(),
-        qr_version:      parsed.version || 'new',
-        raw_qr_value:    raw,
-        is_anomaly:      isAnomaly || isAdminOverride,
-        anomaly_reason:  isAdminOverride
-          ? `Admin override: ${walkInReason||'manual'}`
-          : isAnomaly ? 'MyID tidak cocok' : null,
-      })
-      .select('id')
-      .single();
+    const { error } = await supabase.from('scan_records').insert({
+      user_id:         member.id,
+      event_id:        eventId || null,
+      scanner_user_id: profile?.id,
+      scan_type:       scanType,
+      is_walk_in:      isWalkIn,
+      walkin_reason:   walkInReason,
+      timestamp:       new Date().toISOString(),
+      qr_version:      parsed.version || 'new',
+      raw_qr_value:    raw,
+      is_anomaly:      isAnomaly || isAdminOverride,
+      anomaly_reason:  isAdminOverride
+        ? `Admin override: ${walkInReason||'manual'}`
+        : isAnomaly ? 'MyID tidak cocok' : null,
+    });
 
     if (error) { showResult({ status:'error', message:'Gagal simpan: '+error.message }); return; }
-
-    // ── Misa Besar: update event_latihan_attendance via RPC ──
-    // targetEvent = event row dengan is_misa_besar & mode_latihan
-    const evData = targetEvent || null;
-    let misaBesarNote = '';
-
-    if (
-      evData?.is_misa_besar &&
-      scanType !== 'tugas' && scanType !== 'walkin_tugas' &&  // hanya scan latihan
-      scanRow?.id
-    ) {
-      const result = await processMisaBesarLatihan({
-        scanRecordId: scanRow.id,
-        eventId:      evData.id,
-        userId:       member.id,
-        scannerId:    profile?.id,
-        latihanId:    null, // auto-resolve dari mode_latihan di DB
-      });
-
-      if (result.ok && result.marked > 0) {
-        const modeLabel = result.mode === 'gabung' ? 'Gabung' : 'Terpisah';
-        misaBesarNote = ` · 🎓 ${result.marked} sesi latihan tercatat (Mode ${modeLabel})`;
-      } else if (!result.ok) {
-        console.warn('[ScanPage] Misa Besar scan note:', result.error);
-        misaBesarNote = ' · ⚠️ Sesi latihan tidak ditemukan hari ini';
-      }
-    }
 
     setPendingOverride(null);
     showResult({
       status: (isAnomaly && !isAdminOverride) ? 'warning' : 'success',
       message: isAdminOverride
-        ? `✓ Override admin — ${member.nama_panggilan} (dicatat manual)${misaBesarNote}`
+        ? `✓ Override admin — ${member.nama_panggilan} (dicatat manual)`
         : isAnomaly
-        ? `✓ Scan disimpan (anomali MyID) — ${member.nama_panggilan}${misaBesarNote}`
-        : `✓ ${member.nama_panggilan} — ${scanType === 'latihan' ? 'Latihan' : 'Tugas'}${misaBesarNote}`,
+        ? `✓ Scan disimpan (anomali MyID) — ${member.nama_panggilan}`
+        : `✓ ${member.nama_panggilan} — ${scanType === 'latihan' ? 'Latihan' : 'Tugas'}`,
       member, scanType,
       isLegacy: parsed.version === 'legacy',
       activeWindows,
@@ -650,5 +603,8 @@ export default function ScanPage() {
         )}
       </div>
     </div>
-  );
+    </div>
+  </div>
+  </div>
+);
 }

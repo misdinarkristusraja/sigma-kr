@@ -2,13 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { truncate, ROLE_LABELS, STATUS_LABELS, formatDate, buildWALink, generateMyID, generateNickname } from '../lib/utils';
-
-// Password acak 10 karakter — huruf kecil + angka, mudah dibaca (no 0/O/l/1/I)
-function genPasswordSecure(len = 10) {
-  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
-  return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-}
+import { truncate, ROLE_LABELS, STATUS_LABELS, formatDate, buildWALink, generateMyID } from '../lib/utils';
 import {
   Search, CheckCircle, XCircle, Eye,
   Download, RefreshCw, AlertTriangle, Users,
@@ -121,45 +115,23 @@ export default function MembersPage() {
   // ── Approve Registrasi ──────────────────────────────────────
   async function approveRegistration(reg) {
     try {
-      // Nickname baru: nama_panggilan + inisial kata setelahnya
-      // Contoh: nama_panggilan="satrio", nama_lengkap="Bernardus Satrio Eko Utomo" → "satrio_eu"
-      const rawNickname = generateNickname(
-        reg.nama_panggilan || reg.nickname,
-        reg.nama_lengkap
-      ) || reg.nickname;
+      const myid = await generateMyID(reg.nickname, reg.tanggal_lahir || '2000-01-01');
+      const tempEmail = reg.email || `${reg.nickname}@sigma.krsoba.id`;
+      const tempPass  = `sigma${myid.slice(0,6)}`;
 
-      // Pastikan unik — cek dulu, jika sudah ada tambah suffix angka
-      let finalNickname = rawNickname;
-      let suffix = 2;
-      while (true) {
-        const { data: existing } = await supabase
-          .from('users').select('id').eq('nickname', finalNickname).maybeSingle();
-        if (!existing) break;
-        finalNickname = `${rawNickname}${suffix}`;
-        suffix++;
-      }
-
-      // MyID: black-box hash (server-side, pakai nickname + tanggal_lahir)
-      const myid = await generateMyID(finalNickname, reg.tanggal_lahir || '2000-01-01');
-
-      // Password: auto-generate acak — anggota wajib ganti saat login pertama
-      const tempPass = genPasswordSecure(10);
-
-      const tempEmail = reg.email || `${finalNickname}@sigma.krsoba.id`;
-
-      // Buat auth user via Admin API (agar bcrypt benar)
+      // Buat auth user
       const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
         email: tempEmail, password: tempPass, email_confirm: true,
       });
       if (authErr) throw authErr;
 
-      // Insert ke public.users
+      // Insert ke users
       const { error: dbErr } = await supabase.from('users').insert({
         id:             authData.user.id,
-        nickname:       finalNickname,
+        nickname:       reg.nickname,
         myid,
         nama_lengkap:   reg.nama_lengkap,
-        nama_panggilan: reg.nama_panggilan || reg.nickname,
+        nama_panggilan: reg.nickname,
         tanggal_lahir:  reg.tanggal_lahir,
         pendidikan:     reg.pendidikan,
         sekolah:        reg.sekolah,
@@ -175,21 +147,17 @@ export default function MembersPage() {
         alasan_masuk:   reg.alasan_masuk,
         sampai_kapan:   reg.sampai_kapan,
         surat_pernyataan_url: reg.surat_pernyataan_url,
-        role:               'Misdinar_Aktif',
-        status:             'Active',
-        must_change_password: true,
+        role:   'Misdinar_Aktif',
+        status: 'Active',
       });
       if (dbErr) throw dbErr;
 
+      // Update status registrasi
       await supabase.from('registrations')
         .update({ status: 'Approved', approved_at: new Date().toISOString() })
         .eq('id', reg.id);
 
-      // Tampilkan username + password sekali — admin catat/kirim via WA
-      toast.success(
-        `✅ ${reg.nama_panggilan} disetujui!\nUsername: ${finalNickname}\nPassword: ${tempPass}`,
-        { duration: 10000 }
-      );
+      toast.success(`✅ ${reg.nickname} disetujui! MyID: ${myid} | Password sementara: ${tempPass}`);
       loadData();
     } catch (err) {
       toast.error('Gagal approve: ' + err.message);
@@ -498,5 +466,7 @@ export default function MembersPage() {
         </>
       )}
     </div>
+  </div>
+  </div>
   );
 }

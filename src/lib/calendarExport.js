@@ -1,102 +1,126 @@
-import { format, parseISO, addHours } from 'date-fns';
+/**
+ * calendarExport.js
+ * Generate .ics files for Google Calendar / Apple Calendar / Outlook
+ */
 
-// ── Buka Google Calendar add-event URL (1 event) ─────────────────
-export function exportToGCal({ title, description = '', location = 'Gereja Kristus Raja Solo Baru', startDate, endDate }) {
-  const start = typeof startDate === 'string' ? parseISO(startDate) : startDate;
-  const end   = endDate
-    ? (typeof endDate === 'string' ? parseISO(endDate) : endDate)
-    : addHours(start, 2);
+function pad(n) { return String(n).padStart(2, '0'); }
 
-  const fmt = d => format(d, "yyyyMMdd'T'HHmmss");
-  const params = new URLSearchParams({
-    action: 'TEMPLATE',
-    text: title,
-    dates: `${fmt(start)}/${fmt(end)}`,
-    details: description,
-    location,
-    sf: 'true',
-    output: 'xml',
-  });
-  window.open(`https://calendar.google.com/calendar/render?${params}`, '_blank');
+function toICSDate(dateStr) {
+  // dateStr: 'YYYY-MM-DD' → '20260327'
+  return dateStr.replace(/-/g, '');
 }
 
-// ── Download file .ics (banyak event, bisa diimport ke GCal/Outlook) ─
-export function exportToICS(events, filename = 'jadwal-sigma.ics') {
-  const lines = [
-    'BEGIN:VCALENDAR', 'VERSION:2.0',
-    'PRODID:-//SIGMA//Misdinar KR Solo Baru//ID',
-    'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
-    'X-WR-CALNAME:Jadwal SIGMA - Misdinar KR Solo Baru',
+function toICSDateTime(dateStr, timeStr = '07:00') {
+  // dateStr: 'YYYY-MM-DD', timeStr: 'HH:MM'
+  // Returns local time format (no Z = local timezone)
+  const dt = dateStr.replace(/-/g, '');
+  const tm = timeStr.replace(':', '').replace('.', '') + '00';
+  return `${dt}T${tm}`;
+}
+
+function escapeICS(str) {
+  return (str || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+}
+
+function icsEvent({ uid, summary, description, location, dtstart, dtend, alarm_minutes = 60 }) {
+  return [
+    'BEGIN:VEVENT',
+    `UID:${uid}`,
+    `DTSTAMP:${new Date().toISOString().replace(/[-:]/g,'').split('.')[0]}Z`,
+    `DTSTART;TZID=Asia/Jakarta:${dtstart}`,
+    `DTEND;TZID=Asia/Jakarta:${dtend}`,
+    `SUMMARY:${escapeICS(summary)}`,
+    `DESCRIPTION:${escapeICS(description)}`,
+    location ? `LOCATION:${escapeICS(location)}` : '',
+    'BEGIN:VALARM',
+    'TRIGGER:-PT' + alarm_minutes + 'M',
+    'ACTION:DISPLAY',
+    `DESCRIPTION:Reminder: ${escapeICS(summary)}`,
+    'END:VALARM',
+    'END:VEVENT',
+  ].filter(Boolean).join('\r\n');
+}
+
+/**
+ * Generate ICS dari assignments user
+ * @param {Array} assignments [{event_id, events:{tanggal_tugas, tanggal_latihan, perayaan, nama_event, draft_note}, slot_number}]
+ * @param {string} userName
+ */
+export function generateICS(assignments, userName = '') {
+  const events = [];
+
+  assignments.forEach((a, i) => {
+    const ev  = a.events || {};
+    const name = ev.perayaan || ev.nama_event || 'Misa';
+    const slot = a.slot_number || 1;
+    const slotLabel = { 1:'Sabtu 17:30', 2:'Minggu 06:00', 3:'Minggu 08:00', 4:'Minggu 17:30' }[slot] || '';
+
+    // Misa tugas event
+    if (ev.tanggal_tugas) {
+      const timeMap = { 1: '17:30', 2: '06:00', 3: '08:00', 4: '17:30' };
+      const startTime = timeMap[slot] || '07:00';
+      const [sh, sm] = startTime.split(':').map(Number);
+      const endHour   = pad(sh + 2); // 2 jam
+      const dtstart   = toICSDateTime(ev.tanggal_tugas, startTime);
+      const dtend     = toICSDateTime(ev.tanggal_tugas, `${endHour}:${pad(sm)}`);
+
+      events.push(icsEvent({
+        uid:         `sigma-tugas-${a.event_id}-${slot}-${Date.now()}`,
+        summary:     `⛪ TUGAS MISDINAR — ${name} (${slotLabel})`,
+        description: `Jadwal tugas Misdinar Kristus Raja Solo Baru\nNama: ${userName}\nSlot: ${slotLabel}\nPerayaan: ${name}`,
+        location:    'Gereja Kristus Raja, Solo Baru',
+        dtstart, dtend,
+        alarm_minutes: 1440, // reminder H-1
+      }));
+    }
+
+    // Latihan event
+    if (ev.tanggal_latihan) {
+      const dtstart = toICSDateTime(ev.tanggal_latihan, '08:00');
+      const dtend   = toICSDateTime(ev.tanggal_latihan, '10:00');
+
+      events.push(icsEvent({
+        uid:         `sigma-latihan-${a.event_id}-${Date.now()}`,
+        summary:     `🏋️ LATIHAN MISDINAR — ${name}`,
+        description: `Jadwal latihan sebelum tugas\nNama: ${userName}\nPerayaan: ${name}`,
+        location:    'Gereja Kristus Raja, Solo Baru',
+        dtstart, dtend,
+        alarm_minutes: 60,
+      }));
+    }
+  });
+
+  const ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//SIGMA Misdinar KR//ID',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:Jadwal Misdinar SIGMA',
     'X-WR-TIMEZONE:Asia/Jakarta',
-    'BEGIN:VTIMEZONE', 'TZID:Asia/Jakarta',
-    'BEGIN:STANDARD', 'TZOFFSETFROM:+0700', 'TZOFFSETTO:+0700',
-    'TZNAME:WIB', 'DTSTART:19700101T000000', 'END:STANDARD',
-    'END:VTIMEZONE',
-  ];
+    ...events,
+    'END:VCALENDAR',
+  ].join('\r\n');
 
-  for (const ev of events) {
-    const start = typeof ev.startDate === 'string' ? parseISO(ev.startDate) : ev.startDate;
-    const end   = ev.endDate
-      ? (typeof ev.endDate === 'string' ? parseISO(ev.endDate) : ev.endDate)
-      : addHours(start, 2);
-    const uid = `${Date.now()}-${Math.random().toString(36).slice(2)}@sigma-krsoba`;
-
-    lines.push(
-      'BEGIN:VEVENT',
-      `UID:${uid}`,
-      `DTSTAMP:${format(new Date(), "yyyyMMdd'T'HHmmss'Z'")}`,
-      `DTSTART;TZID=Asia/Jakarta:${format(start, "yyyyMMdd'T'HHmmss")}`,
-      `DTEND;TZID=Asia/Jakarta:${format(end, "yyyyMMdd'T'HHmmss")}`,
-      `SUMMARY:${esc(ev.title)}`,
-      `DESCRIPTION:${esc(ev.description || '')}`,
-      `LOCATION:${esc(ev.location || 'Gereja Kristus Raja Solo Baru')}`,
-      'STATUS:CONFIRMED',
-      `CATEGORIES:${ev.category || 'MISDINAR'}`,
-      'BEGIN:VALARM', 'TRIGGER:-PT60M', 'ACTION:DISPLAY',
-      `DESCRIPTION:Pengingat: ${esc(ev.title)}`,
-      'END:VALARM',
-      'END:VEVENT',
-    );
-  }
-  lines.push('END:VCALENDAR');
-
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(blob), download: filename,
-  });
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
+  return ics;
 }
 
-/** Konversi slot latihan misa khusus → format event */
-export function slotToCalEvent(slot, sessionName) {
-  const startISO = `${slot.tanggal}T${slot.waktu_mulai}`;
-  const endISO   = slot.waktu_selesai ? `${slot.tanggal}T${slot.waktu_selesai}` : null;
-  return {
-    title: `[SIGMA] ${sessionName} — ${slot.nama_slot}`,
-    description: [
-      `Latihan untuk: ${sessionName}`,
-      slot.is_wajib ? '⚠️ WAJIB HADIR' : 'Opsional',
-      slot.keterangan || '',
-    ].filter(Boolean).join('\n'),
-    location: slot.lokasi || 'Gereja Kristus Raja Solo Baru',
-    startDate: startISO,
-    endDate: endISO,
-    category: 'LATIHAN',
-  };
+export function downloadICS(ics, filename = 'jadwal-misdinar.ics') {
+  const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
 }
 
-/** Konversi assignment (tugas misa) → format event */
-export function assignmentToCalEvent(assignment, slotInfo) {
-  return {
-    title: `[SIGMA] Tugas Misa — ${slotInfo.label}`,
-    description: `Jadwal tugas misa sebagai misdinar.\nSlot: ${slotInfo.label}`,
-    location: 'Gereja Kristus Raja Solo Baru',
-    startDate: assignment.datetime,
-    category: 'TUGAS MISA',
-  };
-}
-
-function esc(s) {
-  return String(s).replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n');
+export function openGoogleCalendar(ev) {
+  // Single event → open Google Calendar add event
+  const name  = ev.perayaan || ev.nama_event || 'Misa';
+  const date  = (ev.tanggal_tugas || '').replace(/-/g,'');
+  const url   = `https://calendar.google.com/calendar/render?action=TEMPLATE`
+    + `&text=${encodeURIComponent('⛪ TUGAS: ' + name)}`
+    + `&dates=${date}T073000/${date}T093000`
+    + `&details=${encodeURIComponent('Jadwal tugas Misdinar Kristus Raja Solo Baru')}`
+    + `&location=${encodeURIComponent('Gereja Kristus Raja, Solo Baru')}`;
+  window.open(url, '_blank');
 }

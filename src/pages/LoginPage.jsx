@@ -105,5 +105,6 @@ export default function LoginPage() {
         <p className="text-center text-brand-300/60 text-xs mt-6 italic">"Serve the Lord with Gladness"</p>
       </div>
     </div>
+  </div>
   );
 }

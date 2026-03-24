@@ -10,35 +10,9 @@ export function AuthProvider({ children }) {
 
   const fetchProfile = useCallback(async () => {
     try {
-      // Pastikan ada session dulu
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      if (!authUser) return;
-
-      // Coba 1: RPC get_my_profile (SECURITY DEFINER — bypass RLS, paling reliable)
-      const { data: rpcData, error: rpcErr } = await supabase.rpc('get_my_profile');
-      if (!rpcErr && rpcData) {
-        setProfile(rpcData);
-        return;
-      }
-
-      // Coba 2: Direct query (works jika RLS sudah di-setup dengan policy auth.uid() = id)
-      const { data: row, error: rowErr } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', authUser.id)
-        .single();
-
-      if (!rowErr && row) {
-        setProfile(row);
-        return;
-      }
-
-      // Coba 3: Maybemissing — user baru saja provision, tunggu sebentar lalu coba lagi
-      console.warn('fetchProfile: kedua metode gagal. RPC error:', rpcErr?.message, '| Direct error:', rowErr?.message);
-      // Jika RPC belum ada di DB, tampilkan pesan yang jelas
-      if (rpcErr?.code === 'PGRST202' || rpcErr?.message?.includes('function') ) {
-        console.error('PENTING: Jalankan migration 011_fix_get_my_profile.sql di Supabase SQL Editor!');
-      }
+      const { data, error } = await supabase.rpc('get_my_profile');
+      if (error) { console.error('fetchProfile:', error.message); return; }
+      if (data) setProfile(data);
     } catch (err) {
       console.error('fetchProfile exception:', err);
     }
