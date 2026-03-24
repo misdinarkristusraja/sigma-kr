@@ -413,6 +413,5 @@ Mohon login... (dst)`
         )}
       </div>
     </div>
-  </div>
   );
 }

@@ -2071,9 +2071,5 @@ export default function ScheduleWeeklyPage() {
         </div>
       )}
     </div>
-    </div>
-  </div>
-  </div>
-  </div>
 );
 }

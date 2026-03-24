@@ -339,7 +339,5 @@ export default function StatistikPage() {
         </div>
       </div>
     </div>
-  </div>
-  </div>
   );
 }

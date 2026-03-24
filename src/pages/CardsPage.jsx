@@ -371,6 +371,5 @@ export default function CardsPage() {
         </div>
       </div>
     </div>
-  </div>
   );
 }

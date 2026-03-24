@@ -751,6 +751,5 @@ export default function RecapPage() {
         </p>
       </div>
     </div>
-  </div>
   );
 }

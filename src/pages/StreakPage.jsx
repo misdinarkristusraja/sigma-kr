@@ -203,6 +203,5 @@ export default function StreakPage() {
         </>
       )}
     </div>
-  </div>
   );
 }

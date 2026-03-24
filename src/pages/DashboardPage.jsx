@@ -424,9 +424,5 @@ function StatCard({ icon, label, value, sub, color }) {
         <div className="text-xs text-gray-400">{sub}</div>
       </div>
     </div>
-    </div>
-  </div>
-  </div>
-  </div>
 );
 }

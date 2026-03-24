@@ -636,9 +636,6 @@ export function NotFoundPage() {
         <a href="/dashboard" className="bg-white text-brand-800 font-bold px-6 py-3 rounded-xl">Kembali</a>
       </div>
     </div>
-    </div>
-  </div>
-  </div>
 );
 }
 
