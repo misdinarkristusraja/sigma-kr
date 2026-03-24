@@ -128,7 +128,7 @@ function MisaBesarTab() {
         .from('events')
         .select(`
           id, perayaan, nama_event, tipe_event, tanggal_tugas,
-          warna_liturgi, is_draft, is_misa_besar,
+          warna_liturgi, is_draft, is_misa_besar, mode_latihan,
           assignments(user_id, slot_number,
             users(id, nickname, nama_panggilan, hp_anak, hp_ortu))
         `)
@@ -237,19 +237,78 @@ function MisaBesarTab() {
     }
   }
 
-  // ── Admin: mark attendance manual ─────────────────────────────
-  async function markAttendance(latihanId, userId, hadir) {
-    const { error } = await supabase
-      .from('event_latihan_attendance')
-      .upsert(
-        { latihan_id: latihanId, user_id: userId, hadir, marked_by: profile?.id },
-        { onConflict: 'latihan_id,user_id' }
+  // ── Admin: toggle mode_latihan event ─────────────────────────
+  async function toggleModeLatihan(ev) {
+    const currentMode = ev.mode_latihan || 'gabung';
+    const newMode     = currentMode === 'gabung' ? 'terpisah' : 'gabung';
+
+    // Guard: cek apakah ada data attendance yang sudah ada
+    const hasAttendance = ev.latihan.some(
+      l => (l.event_latihan_attendance || []).length > 0
+    );
+
+    if (hasAttendance) {
+      const confirmSwitch = window.confirm(
+        `⚠️ Event ini sudah punya data kehadiran.
+
+` +
+        `Mengganti mode dari "${currentMode}" ke "${newMode}" tidak menghapus data yang ada, ` +
+        `tapi scan berikutnya akan mengikuti mode baru.
+
+` +
+        `Lanjutkan ganti mode?`
       );
+      if (!confirmSwitch) return;
+    }
 
-    if (error) { toast.error('Gagal update: ' + error.message); return; }
+    const { error } = await supabase
+      .from('events')
+      .update({ mode_latihan: newMode })
+      .eq('id', ev.id);
 
-    toast.success(hadir ? '✅ Hadir dicatat' : '❌ Absen dicatat');
-    // [B5] FIX: await loadData
+    if (error) { toast.error('Gagal ubah mode: ' + error.message); return; }
+
+    toast.success(
+      newMode === 'gabung'
+        ? '✅ Mode diubah ke Gabung — 1 scan untuk semua sesi hari ini'
+        : '✅ Mode diubah ke Terpisah — scan khusus per sesi'
+    );
+    await loadData();
+  }
+
+  // ── Admin: mark attendance manual (polymorphic) ─────────────
+  // mode=gabung  → tandai semua sesi latihan event untuk user tsb
+  // mode=terpisah → hanya tandai latihanId yang diberikan
+  async function markAttendance(latihanId, userId, hadir, ev) {
+    const mode = ev?.mode_latihan || 'terpisah';
+
+    if (mode === 'gabung' && hadir) {
+      // Gabung: tandai semua sesi yang ada untuk event ini
+      const latihanIds = (ev.latihan || []).map(l => l.id);
+      if (!latihanIds.length) {
+        toast.error('Tidak ada sesi latihan di event ini');
+        return;
+      }
+      const rows = latihanIds.map(lid => ({
+        latihan_id: lid, user_id: userId, hadir: true, marked_by: profile?.id,
+      }));
+      const { error } = await supabase
+        .from('event_latihan_attendance')
+        .upsert(rows, { onConflict: 'latihan_id,user_id' });
+
+      if (error) { toast.error('Gagal update: ' + error.message); return; }
+      toast.success(`✅ Hadir dicatat di ${latihanIds.length} sesi (Mode Gabung)`);
+    } else {
+      // Terpisah: hanya satu sesi
+      const { error } = await supabase
+        .from('event_latihan_attendance')
+        .upsert(
+          { latihan_id: latihanId, user_id: userId, hadir, marked_by: profile?.id },
+          { onConflict: 'latihan_id,user_id' }
+        );
+      if (error) { toast.error('Gagal update: ' + error.message); return; }
+      toast.success(hadir ? '✅ Hadir dicatat' : '❌ Absen dicatat');
+    }
     await loadData();
   }
 
@@ -454,6 +513,25 @@ function MisaBesarTab() {
                   {' · '}{ev.latihan.length} sesi latihan
                 </p>
 
+                {/* Mode badge + toggle (staff only) */}
+                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                  <span className={`inline-flex items-center gap-1 text-xs font-medium px-2.5 py-0.5 rounded-full
+                    ${ev.mode_latihan === 'gabung'
+                      ? 'bg-blue-100 text-blue-800'
+                      : 'bg-purple-100 text-purple-800'}`}>
+                    {ev.mode_latihan === 'gabung' ? '🔗 Mode Gabung' : '🔀 Mode Terpisah'}
+                  </span>
+                  {isStaff && (
+                    <button
+                      onClick={() => toggleModeLatihan(ev)}
+                      className="text-xs text-gray-400 hover:text-gray-700 underline underline-offset-2 transition-colors"
+                      title="Klik untuk ganti mode scan latihan"
+                    >
+                      ganti mode
+                    </button>
+                  )}
+                </div>
+
                 {mySummary && (
                   <div className={`inline-flex items-center gap-1.5 mt-1.5 text-xs px-2.5 py-1 rounded-full font-medium
                     ${mySummary.pass ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
@@ -477,6 +555,25 @@ function MisaBesarTab() {
 
             {isExpanded && (
               <div className="mt-4 space-y-4 pt-4 border-t border-gray-100">
+                {/* Mode info banner */}
+                <div className={`flex items-start gap-3 px-3 py-2.5 rounded-xl text-xs
+                  ${ev.mode_latihan === 'gabung'
+                    ? 'bg-blue-50 border border-blue-100 text-blue-800'
+                    : 'bg-purple-50 border border-purple-100 text-purple-800'}`}>
+                  <span className="text-base leading-none">{ev.mode_latihan === 'gabung' ? '🔗' : '🔀'}</span>
+                  <div>
+                    <p className="font-semibold">
+                      Mode {ev.mode_latihan === 'gabung' ? 'Gabung' : 'Terpisah'} aktif
+                    </p>
+                    <p className="mt-0.5 leading-relaxed">
+                      {ev.mode_latihan === 'gabung'
+                        ? 'Satu scan latihan akan menandai kehadiran di SEMUA sesi latihan hari ini sekaligus.'
+                        : 'Setiap sesi latihan dicatat secara terpisah. Scan hanya mencatat sesi yang berlangsung saat itu.'
+                      }
+                    </p>
+                  </div>
+                </div>
+
                 {isStaff && <AddLatihanForm eventId={ev.id} onSaved={loadData} />}
 
                 {pastLatihan.length > 0 && (
@@ -497,7 +594,9 @@ function MisaBesarTab() {
                           submitting={!!submitting[lat.id]}
                           todayStr={todayStr}
                           profile={profile}
-                          onMarkAttendance={markAttendance}
+                          onMarkAttendance={(latihanId, userId, hadir) =>
+                            markAttendance(latihanId, userId, hadir, ev)
+                          }
                           onSubmitAbsence={submitAbsence}
                         />
                       ))}
@@ -640,6 +739,8 @@ function LatihanSessionCard({
   const attendance = lat.event_latihan_attendance || [];
   const absences   = lat.event_latihan_absence    || [];
   const hadirCount = attendance.filter(a => a.hadir).length;
+  const modeLatihan = ev?.mode_latihan || 'terpisah';
+  const isGabung    = modeLatihan === 'gabung';
 
   // [B1] FIX: gunakan Map untuk deduplication yang benar.
   // new Set() pada objects TIDAK pernah mendeduplikasi karena membandingkan
@@ -668,10 +769,17 @@ function LatihanSessionCard({
           </p>
           {lat.lokasi && <p className="text-xs text-gray-500">📍 {lat.lokasi}</p>}
         </div>
-        <span className={`text-xs font-medium px-2 py-0.5 rounded-full
-          ${hadirCount > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-          {hadirCount}/{petugas.length} hadir
-        </span>
+        <div className="flex items-center gap-1.5">
+          {isGabung && (
+            <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-full border border-blue-100">
+              🔗 Gabung
+            </span>
+          )}
+          <span className={`text-xs font-medium px-2 py-0.5 rounded-full
+            ${hadirCount > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+            {hadirCount}/{petugas.length} hadir
+          </span>
+        </div>
       </div>
 
       <div className="divide-y divide-gray-50">
@@ -699,18 +807,18 @@ function LatihanSessionCard({
               </div>
 
               {isStaff && (
-                <div className="flex gap-1">
+                <div className="flex gap-1" title={isGabung ? 'Mode Gabung: ✓ akan tandai semua sesi' : 'Mode Terpisah: hanya sesi ini'}>
                   <button
                     onClick={() => onMarkAttendance(lat.id, p.user_id, true)}
-                    title="Tandai Hadir"
+                    title={isGabung ? `Tandai Hadir di semua sesi (Gabung)` : 'Tandai Hadir sesi ini'}
                     className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs transition-colors
                       ${hadir === true
                         ? 'bg-green-500 text-white'
                         : 'bg-gray-100 hover:bg-green-100 text-gray-400'}`}
-                  >✓</button>
+                  >✓{isGabung ? '•' : ''}</button>
                   <button
                     onClick={() => onMarkAttendance(lat.id, p.user_id, false)}
-                    title="Tandai Absen"
+                    title='Tandai Absen sesi ini'
                     className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs transition-colors
                       ${hadir === false
                         ? 'bg-red-500 text-white'
@@ -795,9 +903,11 @@ function PetugasAttendanceSummary({ ev, pastLatihan, todayStr }) {
 
   return (
     <div className="mt-4 pt-4 border-t border-gray-100">
-      <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">
-        📊 Rekap Kehadiran Petugas (threshold {Math.round(threshold * 100)}%)
-      </p>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+          📊 Rekap Kehadiran Petugas (threshold {Math.round(threshold * 100)}%)
+        </p>
+      </div>
       <div className="space-y-2">
         {petugas.map(p => {
           const attended = pastLatihan.filter(l =>
