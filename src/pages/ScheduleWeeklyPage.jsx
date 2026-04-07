@@ -720,7 +720,7 @@ export default function ScheduleWeeklyPage() {
         <label className="text-[10px] text-gray-500 font-medium">PIC {pos === 'a' ? '1' : '2'}</label>
         <select className="input text-xs mt-0.5" value={val} onChange={e => onChange(e.target.value)}>
           <option value="">— Pilih PIC —</option>
-          {picOptions.map(p => (
+          {picOptions.filter(p => p.role === 'Administrator' || p.role === 'Pengurus').map(p => (
             <option key={p.id} value={p.nickname}>{p.nama_panggilan} (@{p.nickname})</option>
           ))}
         </select>
@@ -1205,7 +1205,7 @@ export default function ScheduleWeeklyPage() {
                                     <select className="input text-xs mt-0.5" value={curA}
                                       onChange={e => setPICField(ev.id, slot, 'a', e.target.value)}>
                                       <option value="">— Pilih —</option>
-                                      {picOptions.map(p => (
+                                      {picOptions.filter(p => p.role === 'Administrator' || p.role === 'Pengurus').map(p => (
                                         <option key={p.id} value={p.nickname}>{p.nama_panggilan}</option>
                                       ))}
                                     </select>
@@ -1215,7 +1215,7 @@ export default function ScheduleWeeklyPage() {
                                     <select className="input text-xs mt-0.5" value={curB}
                                       onChange={e => setPICField(ev.id, slot, 'b', e.target.value)}>
                                       <option value="">— Pilih —</option>
-                                      {picOptions.map(p => (
+                                      {picOptions.filter(p => p.role === 'Administrator' || p.role === 'Pengurus').map(p => (
                                         <option key={p.id} value={p.nickname}>{p.nama_panggilan}</option>
                                       ))}
                                     </select>
@@ -1827,7 +1827,7 @@ export default function ScheduleWeeklyPage() {
                       value={getPelatihField(ev, pos)}
                       onChange={e => setPelatihField(ev.id, pos, e.target.value)}>
                       <option value="">— Pilih Pelatih —</option>
-                      {picOptions.filter(u => u.role === 'Pelatih').map(u => (
+                      {picOptions.map(u => (
                         <option key={u.id} value={u.nickname}>{u.nama_panggilan}</option>
                       ))}
                     </select>
