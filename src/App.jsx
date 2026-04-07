@@ -33,10 +33,16 @@ const STAFF = ['Administrator', 'Pengurus', 'Pelatih'];
 
 function ProtectedRoute({ children, roles }) {
   const { user, profile, loading } = useAuth();
+  
   if (loading) return <LoadingScreen/>;
   if (!user)   return <Navigate to="/login" replace/>;
-  if (roles && profile && !roles.includes(profile.role))
+  
+  // BEST PRACTICE: Tunggu sampai profile didapatkan (mencegah akses sesaat & error undefined)
+  if (!profile) return <LoadingScreen/>;
+  
+  if (roles && !roles.includes(profile.role))
     return <Navigate to="/dashboard" replace/>;
+    
   return children;
 }
 

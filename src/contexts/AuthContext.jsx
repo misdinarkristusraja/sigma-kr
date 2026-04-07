@@ -8,13 +8,24 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = useCallback(async () => {
+  const fetchProfile = useCallback(async (forcedUserId = null) => {
     try {
       const { data, error } = await supabase.rpc('get_my_profile');
-      if (error) { console.error('fetchProfile:', error.message); return; }
-      if (data) setProfile(data);
+      if (error) { 
+        console.error('fetchProfile:', error.message); 
+        // Fallback agar tidak terjebak loading selamanya di ProtectedRoute
+        setProfile({ id: forcedUserId, role: 'Misdinar_Aktif', nama_panggilan: 'User' });
+        return; 
+      }
+      if (data) {
+        setProfile(data);
+      } else {
+        // Jika data kosong / row tidak ditemukan (masalah RLS / akun belum disetujui penuh)
+        setProfile({ id: forcedUserId, role: 'Misdinar_Aktif', nama_panggilan: 'User' });
+      }
     } catch (err) {
       console.error('fetchProfile exception:', err);
+      setProfile({ id: forcedUserId, role: 'Misdinar_Aktif', nama_panggilan: 'User' });
     }
   }, []);
 
@@ -52,9 +63,15 @@ export function AuthProvider({ children }) {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
 
+    // Set state user SECARA SINKRONUS agar router/context segera ter-update
+    // Ini mencegah race-condition di mana user sudah dilempar router, API sudah komplit, tapi context masih null
+    if (data.session?.user) {
+      setUser(data.session.user);
+    }
+
     // 3. Fetch profile
     await new Promise(r => setTimeout(r, 200));
-    await fetchProfile();
+    await fetchProfile(data.session?.user?.id);
     return data;
   }
 

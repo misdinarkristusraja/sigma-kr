@@ -22,7 +22,9 @@ export default function LoginPage() {
     try {
       await signIn(username.trim(), password);
       toast.success('Selamat datang kembali! 🙏');
-      navigate('/dashboard');
+      // Tidak perlu navigate('/dashboard') manual.
+      // Context Auth yang diperbarui akan memicu router App.jsx (<Route path="/login">)
+      // untuk mendeteksi user ? <Navigate to="/dashboard"/> secara otomatis dan aman berbarengan state rutenya.
     } catch (err) {
       toast.error(err.message || 'Login gagal. Cek kembali username/password.');
     } finally {
