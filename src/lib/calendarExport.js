@@ -2,6 +2,40 @@
  * calendarExport.js
  * Generate .ics files for Google Calendar / Apple Calendar / Outlook
  */
+/**
+ * Export jadwal ke format .ics (iCalendar)
+ */
+export function exportToICS(events) {
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//sigma-kr//sigma-kr//EN',
+  ];
+
+  events.forEach((event) => {
+    const start = event.start.replace(/[-:]/g, '').replace('T', 'T');
+    const end = event.end.replace(/[-:]/g, '').replace('T', 'T');
+
+    lines.push('BEGIN:VEVENT');
+    lines.push(`DTSTART:${start}`);
+    lines.push(`DTEND:${end}`);
+    lines.push(`SUMMARY:${event.title}`);
+    if (event.description) lines.push(`DESCRIPTION:${event.description}`);
+    lines.push('END:VEVENT');
+  });
+
+  lines.push('END:VCALENDAR');
+
+  const blob = new Blob([lines.join('\r\n')], {
+    type: 'text/calendar;charset=utf-8',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'schedule.ics';
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
