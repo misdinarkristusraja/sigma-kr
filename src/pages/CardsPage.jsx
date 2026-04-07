@@ -238,9 +238,9 @@ export default function CardsPage() {
     if (!isPengurus || !members.length) return;
     setGenLoading(true);
     setBulkProg({ done: 0, total: members.length });
-    const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
-    const CW = 86, CH = 54, GAP = 4, MARGIN = 10;
-    let itemInRow = 0, currentY = MARGIN;
+    // 1 halaman per kartu (landscape card-size)
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [85, 54] });
+    let firstPage = true;
 
     try {
       for (let i = 0; i < members.length; i++) {
@@ -255,19 +255,19 @@ export default function CardsPage() {
           drawCard(m, tQR, 'tugas'),
         ]);
 
-        // 2 kartu per baris (latihan | tugas)
-        const x = MARGIN;
-        if (i > 0 && i % 2 === 0) {
-          currentY += CH + GAP;
-          if (currentY + CH > 297 - MARGIN) { pdf.addPage(); currentY = MARGIN; }
-        }
-        const colX = i % 2 === 0 ? x : x + CW + GAP;
-        pdf.addImage(lPng, 'PNG', colX, currentY, CW, CH);
+        // Kartu Latihan (1 halaman)
+        if (!firstPage) pdf.addPage([85, 54], 'landscape');
+        firstPage = false;
+        pdf.addImage(lPng, 'PNG', 0, 0, 85, 54);
+
+        // Kartu Tugas (1 halaman)
+        pdf.addPage([85, 54], 'landscape');
+        pdf.addImage(tPng, 'PNG', 0, 0, 85, 54);
 
         setBulkProg({ done: i + 1, total: members.length });
       }
       pdf.save('semua-kartu-sigma.pdf');
-      toast.success(`${members.length} kartu selesai!`);
+      toast.success(`${members.length * 2} kartu (latihan + tugas) selesai!`);
     } catch (e) {
       toast.error('Gagal: ' + e.message);
     } finally {

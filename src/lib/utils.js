@@ -56,6 +56,37 @@ export function getWeekPeriod(dateStr) {
   };
 }
 
+// ── Canonical Week Start (shared across all pages) ────────
+/** Format Date to local YYYY-MM-DD string (no timezone shift) */
+export function toLocalISO(date) {
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+}
+
+/**
+ * Dari date string YYYY-MM-DD, hitung Sabtu awal periode.
+ * Periode: Sabtu 07:00 → Sabtu berikutnya 06:59.
+ * Untuk tanggal-tanggal (tanpa jam), kita anggap:
+ * - Sabtu → periode dimulai di Sabtu itu sendiri
+ * - Minggu–Jumat → mundur ke Sabtu sebelumnya
+ */
+export function getWeekStartFromDate(dateStr) {
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const dow = date.getDay(); // 0=Sun, 6=Sat
+  const daysBack = dow === 6 ? 0 : (dow + 1); // Sun=1, Mon=2, ..., Fri=6, Sat=0
+  const sat = new Date(y, m - 1, d - daysBack);
+  return toLocalISO(sat);
+}
+
+/** Hitung akhir minggu (Jumat) dari tanggal awal minggu (Sabtu) */
+export function getWeekEndFromStart(ws) {
+  if (!ws) return null;
+  const [y, m, d] = ws.split('-').map(Number);
+  const end = new Date(y, m - 1, d + 6);
+  return toLocalISO(end);
+}
+
 // ── MyID / CheckSum Generator ─────────────────────────────
 /** Generate 10-char HEX uppercase dari input */
 export async function generateMyID(nickname, tanggalLahir) {

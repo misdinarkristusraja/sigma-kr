@@ -156,7 +156,7 @@ export default function AdminPage() {
   async function loadUsers() {
     const { data } = await supabase
       .from('users')
-      .select('id, nickname, nama_panggilan, role, status, is_suspended, suspended_until, email, created_at')
+      .select('id, nickname, nama_panggilan, role, status, is_suspended, suspended_until, email, created_at, myid, lingkungan')
       .order('nama_panggilan');
     setUsers(data || []);
   }

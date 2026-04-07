@@ -1,21 +1,14 @@
 import React, { useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { formatDate, hitungPoin } from '../lib/utils';
+import { formatDate, hitungPoin, getWeekStartFromDate } from '../lib/utils';
 import { FileText, Download, RefreshCw, BarChart2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const MONTHS = ['Januari','Februari','Maret','April','Mei','Juni',
                 'Juli','Agustus','September','Oktober','November','Desember'];
 
-function getWeekStart(ds) {
-  if (!ds) return null;
-  const d = new Date(ds + 'T00:00:00');
-  const day = d.getDay();
-  const diff = (day === 0 ? -6 : 1) - day;
-  const mon = new Date(d); mon.setDate(d.getDate() + diff);
-  return mon.toISOString().split('T')[0];
-}
+
 
 export default function LaporanPage() {
   const { profile, isPengurus } = useAuth();
@@ -73,14 +66,14 @@ export default function LaporanPage() {
       activeAssigns.forEach(a => {
         const tgl = a.tanggal_tugas || a.tanggal_latihan;
         if (!tgl || tgl < dateFrom || tgl > dateTo) return;
-        const ws = getWeekStart(tgl); if (!ws) return;
+        const ws = getWeekStartFromDate(tgl); if (!ws) return;
         if (!weeks[ws]) weeks[ws] = { is_dijadwalkan:false, is_hadir_tugas:false, is_hadir_latihan:false, is_walk_in:false };
         weeks[ws].is_dijadwalkan = true;
       });
       const activeEventIds = new Set(activeAssigns.map(a=>a.event_id).filter(Boolean));
       (sMap[m.id]||[]).forEach(s => {
         const ds = s.timestamp?.split('T')[0]; if (!ds || ds < dateFrom || ds > dateTo) return;
-        const ws = getWeekStart(ds); if (!ws) return;
+        const ws = getWeekStartFromDate(ds); if (!ws) return;
         if (!weeks[ws]) weeks[ws] = { is_dijadwalkan:false, is_hadir_tugas:false, is_hadir_latihan:false, is_walk_in:false };
         const t = s.scan_type;
         if (t==='tugas'||t==='walkin_tugas')    weeks[ws].is_hadir_tugas=true;

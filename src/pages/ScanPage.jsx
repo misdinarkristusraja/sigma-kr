@@ -184,17 +184,18 @@ export default function ScanPage() {
 
     const isAnomaly = member.myid !== parsed.myid?.toUpperCase();
 
-    // 2. Anti-duplikat (60 menit)
+    // 2. Anti-duplikat (60 menit) — cek per tipe scan (latihan vs tugas)
     const since = new Date(Date.now() - SCAN_COOLDOWN_MS).toISOString();
+    const scanCategory = parsed.type === 'latihan' ? ['latihan','walkin_latihan'] : ['tugas','walkin_tugas'];
     const { data: dupe } = await supabase.from('scan_records')
       .select('id, timestamp, scanner_user_id, users!scanner_user_id(nama_panggilan)')
       .eq('user_id', member.id)
-      .in('scan_type', ['tugas','latihan','walkin_tugas','walkin_latihan'])
+      .in('scan_type', scanCategory)
       .gte('timestamp', since)
       .order('timestamp', { ascending:false }).limit(1).maybeSingle();
     if (dupe) {
       const minsAgo = Math.floor((Date.now() - new Date(dupe.timestamp)) / 60000);
-      showResult({ status:'warning', message:`${member.nama_panggilan} sudah discan ${minsAgo} menit lalu.`, member }); return;
+      showResult({ status:'warning', message:`${member.nama_panggilan} sudah discan ${parsed.type} ${minsAgo} menit lalu.`, member }); return;
     }
 
     // 3. Cari semua event hari ini (tanggal_tugas atau tanggal_latihan = hari ini)

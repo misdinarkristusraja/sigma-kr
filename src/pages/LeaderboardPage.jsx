@@ -1,24 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { hitungPoin, tagDuplicateNames } from '../lib/utils';
+import { hitungPoin, tagDuplicateNames, getWeekStartFromDate, toLocalISO } from '../lib/utils';
 import { Trophy, Crown, Medal, RefreshCw } from 'lucide-react';
 
 // ─── Helpers ──────────────────────────────────────────────
-function toLocalISO(d) {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
 function cutoff(months) {
   const d = new Date(); d.setMonth(d.getMonth()-months); return toLocalISO(d);
-}
-function getWeekStart(dateStr) {
-  if (!dateStr) return null;
-  const [y,m,d] = dateStr.split('-').map(Number);
-  const date = new Date(y,m-1,d);
-  const dow  = date.getDay();
-  const back = dow===6 ? 0 : (dow+1);
-  const sat  = new Date(y,m-1,d-back);
-  return toLocalISO(sat);
 }
 
 // ─── Hitung leaderboard mingguan real-time ────────────────
@@ -56,7 +44,7 @@ function buildLeaderboard({ members, assigns, scans, swaps, dateFrom, dateTo }) 
     aMap[m.id].filter(a => !a.assignment_id || !replacedIds.has(a.assignment_id)).forEach(a => {
       const tgl = a.tanggal_tugas || a.tanggal_latihan;
       if (!tgl || (dateFrom && tgl < dateFrom) || (dateTo && tgl > dateTo)) return;
-      const ws = getWeekStart(tgl); if (!ws) return;
+      const ws = getWeekStartFromDate(tgl); if (!ws) return;
       if (!weeks[ws]) weeks[ws] = mkW();
       weeks[ws].is_dijadwalkan = true;
     });
@@ -65,7 +53,7 @@ function buildLeaderboard({ members, assigns, scans, swaps, dateFrom, dateTo }) 
     sMap[m.id].forEach(s => {
       const ds = s.timestamp?.split('T')[0];
       if (!ds || (dateFrom && ds < dateFrom) || (dateTo && ds > dateTo)) return;
-      const ws = getWeekStart(ds); if (!ws) return;
+      const ws = getWeekStartFromDate(ds); if (!ws) return;
       if (!weeks[ws]) weeks[ws] = mkW();
       const t = s.scan_type;
       if (t === 'tugas'   || t === 'walkin_tugas')   weeks[ws].is_hadir_tugas   = true;
@@ -73,7 +61,7 @@ function buildLeaderboard({ members, assigns, scans, swaps, dateFrom, dateTo }) 
       // Walk-in: walkin_* type OR scan event not in active assignments
       if (t === 'walkin_tugas' || t === 'walkin_latihan') {
         weeks[ws].is_walk_in = true;
-      } else if ((t === 'tugas') && s.event_id && !activeEventIds.has(s.event_id)) {
+      } else if ((t === 'tugas' || t === 'latihan') && s.event_id && !activeEventIds.has(s.event_id)) {
         weeks[ws].is_walk_in = true;
       } else if (!s.event_id && !weeks[ws].is_dijadwalkan) {
         weeks[ws].is_walk_in = true;

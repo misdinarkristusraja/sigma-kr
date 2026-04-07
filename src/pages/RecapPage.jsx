@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { generateICS, downloadICS } from '../lib/calendarExport';
 import { useAuth } from '../contexts/AuthContext';
-import { formatDate, downloadCSV, hitungPoin } from '../lib/utils';
+import { formatDate, downloadCSV, hitungPoin, getWeekStartFromDate, getWeekEndFromStart, toLocalISO } from '../lib/utils';
 import { BarChart2, Download, TrendingUp, Calendar, RefreshCw, Info, Search } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
 
@@ -18,23 +18,6 @@ const KONDISI_INFO = {
 const MONTH_NAMES = ['','Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
 
 // ─── Helpers tanggal ──────────────────────────────────────
-function toLocalISO(date) {
-  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
-}
-function getWeekStartFromDate(dateStr) {
-  if (!dateStr) return null;
-  const [y,m,d] = dateStr.split('-').map(Number);
-  const date = new Date(y, m-1, d);
-  const dow  = date.getDay();
-  const daysBack = dow === 6 ? 0 : (dow + 1);
-  const sat = new Date(y, m-1, d - daysBack);
-  return toLocalISO(sat);
-}
-function getWeekEndFromStart(ws) {
-  const [y,m,d] = ws.split('-').map(Number);
-  const end = new Date(y, m-1, d+6);
-  return toLocalISO(end);
-}
 function dateCutoff(months) {
   if (!months) return null;
   const d = new Date();

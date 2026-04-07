@@ -79,12 +79,13 @@ export default function DashboardPage() {
       const today = new Date().toISOString().split('T')[0];
       const { data } = await supabase
         .from('assignments')
-        .select('id, slot_number, events(nama_event, tanggal_tugas, perayaan)')
+        .select('id, slot_number, events(nama_event, tanggal_tugas, perayaan, tipe_event)')
         .eq('user_id', profile.id)
         .gte('events.tanggal_tugas', today)
         .order('events.tanggal_tugas')
-        .limit(3);
-      setMySched((data || []).filter(d => d.events));
+        .limit(6);
+      // Filter out Misa_Harian — only show Mingguan/Misa_Khusus
+      setMySched((data || []).filter(d => d.events && d.events.tipe_event !== 'Misa_Harian'));
     } catch (e) {
       console.error('loadMySchedule:', e);
     }
