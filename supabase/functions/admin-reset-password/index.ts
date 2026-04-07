@@ -90,23 +90,27 @@ serve(async (req) => {
 
       // Pastikan user ada di identity auth Supabase
       const { data: existingAuth } = await admin.auth.admin.getUserById(target_user_id);
+      
+      const { data: pubUser } = await admin
+        .from("users").select("email").eq("id", target_user_id).single();
+
+      if (!pubUser?.email) {
+        return reply({ ok: false, error: "User tidak ditemukan di tabel public.users" }, 404);
+      }
 
       if (!existingAuth?.user) {
-        // Jika belum masuk ke auth.users, create manual (misal user dari legacy)
-        const { data: pubUser } = await admin
-          .from("users").select("email").eq("id", target_user_id).single();
-          
-        if (!pubUser?.email) {
-          return reply({ ok: false, error: "User tidak ditemukan di tabel public.users" }, 404);
-        }
+        // Jika belum masuk ke auth.users, create manual
         const { error: ce } = await admin.auth.admin.createUser({
           email: pubUser.email, password: new_password, email_confirm: true,
         });
         if (ce) return reply({ ok: false, error: "Gagal Create User: " + ce.message }, 500);
       } else {
-        // Jika sudah ada, tinggal update
+        // Jika sudah ada, tinggal update, sinkronkan email & HAPUS ban_duration jika nyangkut
         const { error: ue } = await admin.auth.admin.updateUserById(target_user_id, {
-          password: new_password, email_confirm: true,
+          email: pubUser.email,
+          password: new_password, 
+          email_confirm: true,
+          ban_duration: 'none'
         });
         if (ue) return reply({ ok: false, error: "Gagal Update User: " + ue.message }, 500);
       }
