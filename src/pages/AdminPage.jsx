@@ -297,8 +297,8 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     for (const u of targets) {
       const pw = genPassword(8);
       try {
-        const { data, error } = await supabase.rpc('admin_reset_password', {
-          p_user_id: u.id, p_new_password: pw,
+        const { data, error } = await supabase.functions.invoke('admin-reset-password', {
+          body: { mode: 'reset', user_id: u.id, new_password: pw }
         });
         if (error) throw error;
         if (data?.ok === false) throw new Error(data.error);
@@ -329,7 +329,9 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     for (const u of targets) {
       const pw = genPassword(8);
       try {
-        const { data, error } = await supabase.rpc('admin_reset_password', { p_user_id: u.id, p_new_password: pw });
+        const { data, error } = await supabase.functions.invoke('admin-reset-password', { 
+          body: { mode: 'reset', user_id: u.id, new_password: pw } 
+        });
         if (error) throw error;
         if (data?.ok === false) throw new Error(data.error);
         results.push({ user: u, password: pw, ok: true });
@@ -614,8 +616,8 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
               members={pwUsers}
               genPassword={genPassword}
               onReset={async (userId, pw) => {
-                const { data, error } = await supabase.rpc('admin_reset_password', {
-                  p_user_id: userId, p_new_password: pw,
+                const { data, error } = await supabase.functions.invoke('admin-reset-password', {
+                  body: { mode: 'reset', user_id: userId, new_password: pw }
                 });
                 if (error) return { ok: false, error: error.message };
                 if (data?.ok === false) return { ok: false, error: data.error };

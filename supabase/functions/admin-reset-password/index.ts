@@ -34,13 +34,40 @@ serve(async (req) => {
 
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+    const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
     const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    const SIGMA_SECRET = Deno.env.get("SIGMA_SECRET") ?? "";
 
-    if (!SERVICE_KEY) {
-      return reply({ ok: false, error: "SUPABASE_SERVICE_ROLE_KEY belum di-set di Edge Function secrets" }, 500);
+    if (!SUPABASE_URL || !SERVICE_KEY) {
+      return reply({ ok: false, error: "Environment variables Supabase belum lengkap" }, 500);
     }
 
+    // 1. Verifikasi JWT pemanggil (Caller)
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return reply({ ok: false, error: "Missing Authorization header" }, 401);
+    }
+
+    const authClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: { user }, error: authErr } = await authClient.auth.getUser();
+    if (authErr || !user) {
+      return reply({ ok: false, error: "Invalid JWT Token" }, 401);
+    }
+
+    // 2. Cek Role Administrator
+    const { data: profile } = await authClient
+      .from("users")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    if (profile?.role !== "Administrator") {
+      return reply({ ok: false, error: "Akses ditolak: Hanya Administrator" }, 403);
+    }
+
+    // 3. Setup Admin Client
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
@@ -48,51 +75,46 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const mode = (body.mode as string) ?? "reset";
 
-    // Ping — tidak butuh secret, hanya cek EF aktif
     if (mode === "ping") {
-      return reply({ ok: true, status: "aktif", jwt_disabled: true });
-    }
-
-    // Verifikasi secret
-    const secret = (body.secret as string) ?? "";
-    if (!SIGMA_SECRET) {
-      return reply({ ok: false, error: "SIGMA_SECRET belum di-set di Edge Function secrets" }, 500);
-    }
-    if (secret !== SIGMA_SECRET) {
-      return reply({ ok: false, error: "Secret key salah" }, 403);
+      return reply({ ok: true, status: "aktif", jwt_verified: true });
     }
 
     // ── MODE: reset ───────────────────────────────────────────
     if (mode === "reset") {
-      const user_id      = body.user_id as string;
-      const new_password = body.new_password as string;
+      const target_user_id = body.user_id as string;
+      const new_password   = body.new_password as string;
 
-      if (!user_id || !new_password) {
-        return reply({ ok: false, error: "user_id dan new_password wajib" }, 400);
+      if (!target_user_id || !new_password) {
+        return reply({ ok: false, error: "user_id dan new_password wajib disediakan" }, 400);
       }
 
-      const { data: existingAuth } = await admin.auth.admin.getUserById(user_id);
+      // Pastikan user ada di identity auth Supabase
+      const { data: existingAuth } = await admin.auth.admin.getUserById(target_user_id);
 
       if (!existingAuth?.user) {
+        // Jika belum masuk ke auth.users, create manual (misal user dari legacy)
         const { data: pubUser } = await admin
-          .from("users").select("email").eq("id", user_id).single();
+          .from("users").select("email").eq("id", target_user_id).single();
+          
         if (!pubUser?.email) {
-          return reply({ ok: false, error: "User tidak ditemukan di database" }, 404);
+          return reply({ ok: false, error: "User tidak ditemukan di tabel public.users" }, 404);
         }
         const { error: ce } = await admin.auth.admin.createUser({
           email: pubUser.email, password: new_password, email_confirm: true,
         });
-        if (ce) return reply({ ok: false, error: ce.message }, 500);
+        if (ce) return reply({ ok: false, error: "Gagal Create User: " + ce.message }, 500);
       } else {
-        const { error: ue } = await admin.auth.admin.updateUserById(user_id, {
+        // Jika sudah ada, tinggal update
+        const { error: ue } = await admin.auth.admin.updateUserById(target_user_id, {
           password: new_password, email_confirm: true,
         });
-        if (ue) return reply({ ok: false, error: ue.message }, 500);
+        if (ue) return reply({ ok: false, error: "Gagal Update User: " + ue.message }, 500);
       }
 
+      // Tandai mereka wajib ganti password
       await admin.from("users")
         .update({ must_change_password: true, updated_at: new Date().toISOString() })
-        .eq("id", user_id);
+        .eq("id", target_user_id);
 
       return reply({ ok: true });
     }
@@ -115,6 +137,7 @@ serve(async (req) => {
           lingkungan: m.lingkungan ?? "", hp_ortu: m.hp_ortu ?? "", hp_anak: m.hp_anak ?? "",
         };
         const { data: ea } = await admin.auth.admin.getUserById(m.id);
+        
         if (!ea?.user) {
           const { error: ce } = await admin.auth.admin.createUser({
             email: m.email, password: pw, email_confirm: true,
