@@ -86,7 +86,11 @@ self.addEventListener('message', event => {
   if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
-// ── Push Notification ────────────────────────────────────────self.addEventListener('push', event => {
+// ── Push Notification ────────────────────────────────────────
+// FIX BUG-001: komentar dan addEventListener dipisah ke baris berbeda.
+// Sebelumnya keduanya ada di satu baris sehingga addEventListener ikut
+// menjadi komentar dan service worker crash saat di-parse.
+self.addEventListener('push', event => {
   if (!event.data) return;
   let payload;
   try { payload = event.data.json(); }

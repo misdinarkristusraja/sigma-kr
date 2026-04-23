@@ -28,22 +28,32 @@ export function formatDate(date, fmt = 'EEEE, dd MMMM yyyy') {
   return format(d, fmt, { locale: id });
 }
 
-/** Hitung periode minggu: Sabtu 07:00 WIB → Sabtu berikutnya 06:59:59 WIB */
+/**
+ * Hitung periode minggu: Sabtu 07:00 WIB → Sabtu berikutnya 06:59:59 WIB
+ *
+ * FIX BUG-013: Gunakan UTC+7 secara eksplisit untuk mendeteksi hari-dalam-minggu
+ * dan jam cutoff, bukan getHours() yang bergantung pada timezone device.
+ * Ini penting agar boundary Sabtu 07:00 WIB konsisten apapun zona waktu device.
+ */
 export function getWeekPeriod(dateStr) {
   const date = typeof dateStr === 'string' ? parseISO(dateStr) : dateStr;
-  const dayOfWeek = date.getDay(); // 0=Sun, 6=Sat
-  const hour = date.getHours();
 
-  // Tentukan Sabtu awal periode
+  // Konversi ke WIB untuk baca DOW dan jam secara akurat
+  const wibMs  = date.getTime() + WIB_OFFSET * 60 * 1000;
+  const wib    = new Date(wibMs);
+  const dow    = wib.getUTCDay();   // 0=Sun, 6=Sat (dalam perspektif WIB)
+  const hourWIB = wib.getUTCHours(); // jam di WIB
+
+  // Tentukan Sabtu awal periode (bekerja pada objek Date lokal agar format tetap benar)
   let weekStart = new Date(date);
-  if (dayOfWeek === 6 && hour >= 7) {
-    // Sudah Sabtu >= 07:00, ini periode berjalan
+  if (dow === 6 && hourWIB >= 7) {
+    // Sudah Sabtu >= 07:00 WIB → periode berjalan, tidak perlu mundur
   } else {
     // Mundur ke Sabtu sebelumnya
-    const daysBack = dayOfWeek === 6 ? 7 : (dayOfWeek + 1);
+    const daysBack = dow === 6 ? 7 : (dow + 1);
     weekStart.setDate(weekStart.getDate() - daysBack);
   }
-  weekStart.setHours(7, 0, 0, 0);
+  weekStart.setHours(7, 0, 0, 0); // 07:00 local — device pengguna di WIB, ini konsisten
 
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekEnd.getDate() + 7);
@@ -200,25 +210,30 @@ export const STATUS_LABELS = {
  * K1 (+2): Dijadwalkan + Hadir Tugas + Hadir Latihan
  * K2 (+3): Walk-in (tidak dijadwalkan) + Hadir Latihan
  * K3 (+1): Dijadwalkan + Hadir Tugas + Tidak Latihan
- * K4 (+1): Walk-in (tidak dijadwalkan) + Tidak Latihan
- * K5 (+1): Dijadwalkan + Tidak Tugas + Hadir Latihan  ← datang latihan
- * K6 (-1): Dijadwalkan + Tidak Tugas + Tidak Latihan  ← absen total
+ * K4 (+2): Walk-in (tidak dijadwalkan) + Tidak Latihan         ← FIX BUG-002: +2 bukan +1
+ * K5 (+1): Tidak dijadwalkan + Tidak walk-in + Hadir Latihan  ← FIX BUG-003: kondisi sesuai SKPL & SQL
+ * K6 (-1): Dijadwalkan + Tidak Tugas + Tidak Latihan           ← absen total
  *
  * Jika tidak dijadwalkan DAN tidak ada scan sama sekali → null (tidak dihitung)
  */
 export function hitungPoin({ isDijadwalkan, isHadirTugas, isHadirLatihan, isWalkIn }) {
   // K1: dijadwalkan + tugas + latihan
-  if (isDijadwalkan && isHadirTugas && isHadirLatihan)  return { poin:  2, kondisi: 'K1' };
+  if (isDijadwalkan && isHadirTugas && isHadirLatihan)   return { poin:  2, kondisi: 'K1' };
   // K2: walk-in + latihan (bonus karena tidak wajib tapi datang latihan)
-  if (!isDijadwalkan && isWalkIn && isHadirLatihan)     return { poin:  3, kondisi: 'K2' };
+  if (!isDijadwalkan && isWalkIn && isHadirLatihan)      return { poin:  3, kondisi: 'K2' };
   // K3: dijadwalkan + tugas tapi tidak latihan
-  if (isDijadwalkan && isHadirTugas && !isHadirLatihan) return { poin:  1, kondisi: 'K3' };
+  if (isDijadwalkan && isHadirTugas && !isHadirLatihan)  return { poin:  1, kondisi: 'K3' };
   // K4: walk-in tapi tidak latihan
-  if (!isDijadwalkan && isWalkIn && !isHadirLatihan)    return { poin:  1, kondisi: 'K4' };
-  // K5: dijadwalkan tapi tidak tugas, tapi hadir latihan → +1 (ada usaha)
-  if (isDijadwalkan && !isHadirTugas && isHadirLatihan) return { poin:  1, kondisi: 'K5' };
+  // FIX BUG-002: SKPL Bab 6.1 menetapkan K4 = +2, bukan +1.
+  // SQL hitung_poin_kondisi sudah benar (SELECT 2); JS ini sekarang diselaraskan.
+  if (!isDijadwalkan && isWalkIn && !isHadirLatihan)     return { poin:  2, kondisi: 'K4' };
+  // K5: tidak dijadwalkan, tidak walk-in, tapi hadir latihan
+  // FIX BUG-003: Kondisi sebelumnya (isDijadwalkan && !isHadirTugas && isHadirLatihan) salah;
+  // SKPL & SQL keduanya mendefinisikan K5 sebagai user yang TIDAK dijadwalkan dan TIDAK walk-in
+  // tapi hadir latihan. Kondisi yang lama tidak memiliki padanan di SQL sehingga tidak ter-score.
+  if (!isDijadwalkan && !isWalkIn && isHadirLatihan)     return { poin:  1, kondisi: 'K5' };
   // K6: dijadwalkan tapi absen total (tidak tugas, tidak latihan)
-  if (isDijadwalkan && !isHadirTugas && !isHadirLatihan)return { poin: -1, kondisi: 'K6' };
+  if (isDijadwalkan && !isHadirTugas && !isHadirLatihan) return { poin: -1, kondisi: 'K6' };
   // Tidak dijadwalkan & tidak ada scan → tidak dihitung
   return { poin: 0, kondisi: null };
 }
@@ -250,16 +265,11 @@ export const JENJANG_LABELS = { SD: 'SD', SMP: 'SMP', SMA: 'SMA', SMK: 'SMK', Lu
  *   1. Inisial nama belakang  → "Rafa A."
  *   2. Lingkungan             → "Rafa (Barnabas)"
  *   3. Inisial nickname       → "Rafa [rfq]"
- *
- * Penggunaan:
- *   const tagged = tagDuplicateNames(members);
- *   tagged[member.id] → nama tampil yang unik
  */
 export function tagDuplicateNames(members) {
   const result = {};
   const byName = {};
 
-  // Kelompokkan per nama_panggilan
   members.forEach(m => {
     const key = (m.nama_panggilan || '').trim().toLowerCase();
     if (!byName[key]) byName[key] = [];
@@ -271,18 +281,14 @@ export function tagDuplicateNames(members) {
     const group = byName[key];
 
     if (group.length <= 1) {
-      // Tidak ada duplikat — tampilkan apa adanya
       result[m.id] = m.nama_panggilan || m.nickname;
     } else {
-      // Ada duplikat — tambahkan suffix disambiguasi
       const base = m.nama_panggilan || m.nickname;
 
-      // Coba suffix 1: inisial nama belakang dari nama_lengkap
       if (m.nama_lengkap) {
         const parts  = m.nama_lengkap.trim().split(/\s+/);
         if (parts.length > 1) {
           const initial = parts[parts.length - 1][0].toUpperCase() + '.';
-          // Cek apakah inisial ini unik di dalam group
           const sameInitial = group.filter(g => {
             if (!g.nama_lengkap) return false;
             const gParts = g.nama_lengkap.trim().split(/\s+/);
@@ -295,7 +301,6 @@ export function tagDuplicateNames(members) {
         }
       }
 
-      // Coba suffix 2: lingkungan (disingkat)
       if (m.lingkungan) {
         const sameLinkg = group.filter(g => g.lingkungan === m.lingkungan);
         if (sameLinkg.length === 1) {
@@ -304,18 +309,13 @@ export function tagDuplicateNames(members) {
         }
       }
 
-      // Fallback suffix 3: nickname dalam kurung kotak
       result[m.id] = `${base} [${m.nickname}]`;
     }
   });
 
-  return result; // { userId: displayName }
+  return result;
 }
 
-/**
- * Versi singkat: dapatkan display name untuk SATU user
- * berdasarkan konteks daftar anggota yang sedang ditampilkan.
- */
 export function getDisplayName(member, allMembers) {
   if (!allMembers || allMembers.length === 0) return member.nama_panggilan || member.nickname;
   const tagged = tagDuplicateNames(allMembers);

@@ -43,10 +43,8 @@ function isInTimeWindow(slotMinutes) {
 }
 
 // Cari window yang aktif sekarang dari daftar event hari ini
-// Mengembalikan array string deskripsi window yang aktif
 function getActiveWindows(events, today) {
   const activeWindows = [];
-  const now = nowMinutesWIB();
 
   for (const ev of events) {
     const isSaturday = ev.tanggal_latihan === today;
@@ -114,19 +112,23 @@ export default function ScanPage() {
   const [walkIn,    setWalkIn]    = useState(null);
   const [countdown, setCountdown] = useState(0);
   const [camError,  setCamError]  = useState('');
-  // Untuk override admin: data scan yang menunggu konfirmasi
   const [pendingOverride, setPendingOverride] = useState(null);
   const [showManual,      setShowManual]      = useState(false);
   const [manualNick,      setManualNick]      = useState('');
   const [manualLoading,   setManualLoading]   = useState(false);
 
   const startCamera = useCallback(async () => {
+    // FIX BUG-012: Cancel RAF loop yang mungkin masih berjalan dari sesi sebelumnya
+    // sebelum memulai kamera baru. Tanpa ini, dua RAF loop bisa berjalan bersamaan
+    // saat handleReset() memanggil startCamera() berulang kali, menyebabkan CPU spike
+    // dan deteksi QR yang tidak konsisten.
+    cancelAnimationFrame(animRef.current);
     setCamError('');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
       });
-      streamRef.current      = stream;
+      streamRef.current         = stream;
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
       setScanning(true);
@@ -234,9 +236,8 @@ export default function ScanPage() {
     }
 
     // 6. Cari event yang paling relevan (tempat user dijadwalkan)
-    let targetEvent = null;
+    let targetEvent  = null;
     let assignmentId = null;
-    let isWalkInScan = false;
 
     for (const ev of todayEvents) {
       const { data: asgn } = await supabase.from('assignments')
@@ -244,17 +245,28 @@ export default function ScanPage() {
       if (asgn) { targetEvent = ev; assignmentId = asgn.id; break; }
     }
 
-    // 7. Validasi: user punya tugas hari ini?
+    // 7. User tidak ada di jadwal hari ini → Walk-in (SKPL F3.5)
     if (!targetEvent) {
-      // Tidak ada assignment → scan TIDAK VALID (bukan walk-in otomatis)
-      const msg = `${member.nama_panggilan} tidak memiliki jadwal tugas hari ini. Scan tidak valid.`;
       if (isAdmin) {
+        // Admin: tampilkan override panel dengan pilihan alasan
         setPendingOverride({
-          member, parsed, raw, isAnomaly, events: todayEvents, reason: msg,
-          allowWalkIn: true, // admin bisa force sebagai walk-in
+          member, parsed, raw, isAnomaly, events: todayEvents,
+          reason: `${member.nama_panggilan} tidak memiliki jadwal tugas hari ini.`,
+          allowWalkIn: true,
         });
       } else {
-        showResult({ status:'invalid', message: msg, member });
+        // FIX BUG-004: Pelatih/Pengurus non-admin → tampilkan dialog walk-in sesuai SKPL F3.5.
+        // Sebelumnya, blok ini langsung menampilkan showResult 'invalid', sehingga
+        // setWalkIn tidak pernah dipanggil dan dialog Menggantikan/Sukarela/Lainnya
+        // tidak pernah muncul untuk role selain Admin.
+        setWalkIn({
+          member,
+          qrData:      parsed,
+          raw,
+          isAnomaly,
+          activeEvent: todayEvents?.[0] || null,  // event paling relevan hari ini
+          activeWindows,
+        });
       }
       return;
     }
@@ -317,7 +329,7 @@ export default function ScanPage() {
     });
   }
 
-  // ── Walk-in (dari proses normal) ───────────────────────────
+  // ── Walk-in (dari proses normal — non-admin) ───────────────
   async function confirmWalkIn(reason) {
     if (!walkIn) return;
     await saveScanRecord({
@@ -347,7 +359,6 @@ export default function ScanPage() {
     setManualLoading(true);
     stopCamera();
 
-    // Cari user berdasarkan nickname
     const { data: member } = await supabase
       .from('users')
       .select('id, nickname, myid, nama_panggilan, lingkungan, role, status, is_suspended')
@@ -365,15 +376,12 @@ export default function ScanPage() {
       return;
     }
 
-    // Gunakan proses yang sama dengan QR tapi dengan is_anomaly = true (manual)
-    // Buat parsed object seolah QR
     const fakeParsed = { nickname: member.nickname, myid: member.myid, type: 'tugas', version: 'manual' };
 
     setShowManual(false);
     setManualNick('');
     setManualLoading(false);
 
-    // Override langsung — input manual selalu dianggap admin/PIC override
     setPendingOverride({
       member,
       parsed: fakeParsed,
@@ -479,13 +487,13 @@ export default function ScanPage() {
           </div>
         )}
 
-        {/* Walk-in dialog (jarang muncul — hanya jika flow normal) */}
+        {/* Walk-in dialog — SKPL F3.5 — muncul saat user tidak ada di jadwal */}
         {walkIn && (
           <div className="bg-gray-900 rounded-2xl p-6 max-w-sm w-full">
             <div className="text-center mb-4">
               <AlertTriangle size={40} className="text-yellow-400 mx-auto mb-2"/>
               <h3 className="text-white font-bold text-lg">Walk-in</h3>
-              <p className="text-gray-300 text-sm">{walkIn.member?.nama_panggilan} tidak di jadwal.</p>
+              <p className="text-gray-300 text-sm">{walkIn.member?.nama_panggilan} tidak ada di jadwal.</p>
             </div>
             <div className="space-y-2">
               {['Menggantikan','Sukarela','Lainnya'].map(r => (
@@ -604,5 +612,5 @@ export default function ScanPage() {
         )}
       </div>
     </div>
-);
+  );
 }
