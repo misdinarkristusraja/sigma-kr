@@ -13,18 +13,20 @@ const CONFIG_GROUPS = {
 };
 
 // ─── Komponen: Edge Function Health Banner ────────────────────
-// Ditampilkan sebelum operasi bulk untuk memberi tahu Admin
-// apakah edge function dapat dijangkau atau tidak.
+// status: null | 'checking' | 'ok' | { httpStatus, errorCode, message }
+// Menampilkan panduan spesifik berdasarkan HTTP status code dari edge function.
 function EdgeFunctionStatus({ status }) {
   if (!status) return null;
+
   if (status === 'checking') {
     return (
       <div className="flex items-center gap-2 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
         <div className="w-3 h-3 border-2 border-blue-400/40 border-t-blue-600 rounded-full animate-spin"/>
-        Memeriksa koneksi ke Edge Function...
+        Memeriksa edge function...
       </div>
     );
   }
+
   if (status === 'ok') {
     return (
       <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-xl px-4 py-2.5">
@@ -32,21 +34,101 @@ function EdgeFunctionStatus({ status }) {
       </div>
     );
   }
-  // status === 'error'
+
+  // status is an error object: { httpStatus, errorCode, message }
+  const { httpStatus, errorCode, message } = status;
+
+  // Panduan berbeda berdasarkan HTTP status code yang sebenarnya
+  const GUIDES = {
+    0: {
+      title: 'Tidak dapat terhubung ke Edge Function (Network Error)',
+      items: [
+        'Edge Function belum di-deploy — jalankan perintah di bawah',
+        'Supabase project sedang pause (Free Tier) → buka Dashboard Supabase untuk mengaktifkan',
+        'Koneksi internet bermasalah',
+      ],
+      showDeploy: true,
+    },
+    401: {
+      title: 'Token JWT ditolak (HTTP 401)',
+      items: [
+        'Session login sudah expired → logout lalu login kembali',
+        'Token rusak — coba hard refresh browser (Ctrl+Shift+R)',
+        'Pastikan VITE_SUPABASE_URL dan VITE_SUPABASE_ANON_KEY di Vercel sudah benar',
+      ],
+      showDeploy: false,
+    },
+    403: {
+      title: 'Akses ditolak (HTTP 403)',
+      items: [
+        'Akun yang login bukan Administrator atau profil tidak ditemukan di database',
+        'Pastikan kolom "role" di tabel users adalah "Administrator" (bukan "Misdinar_Aktif")',
+        'Jika status akun "Retired", ubah dulu ke "Active" di tabel users via Supabase Dashboard → Table Editor',
+      ],
+      showDeploy: false,
+    },
+    404: {
+      title: 'Edge Function tidak ditemukan (HTTP 404)',
+      items: [
+        'Edge Function belum di-deploy atau nama salah',
+        'Deploy ulang dengan perintah di bawah',
+        'Pastikan nama function persis: admin-reset-password (huruf kecil, pakai tanda hubung)',
+      ],
+      showDeploy: true,
+    },
+    500: {
+      title: 'Edge Function crash saat dijalankan (HTTP 500)',
+      items: [
+        'Environment variable SUPABASE_SERVICE_ROLE_KEY tidak tersedia di edge function',
+        'Cek Supabase Dashboard → Edge Functions → admin-reset-password → Logs untuk detail error',
+        'Coba deploy ulang',
+      ],
+      showDeploy: true,
+    },
+  };
+
+  const guide = GUIDES[httpStatus] || {
+    title: `Edge Function error (HTTP ${httpStatus || 'unknown'})`,
+    items: ['Cek Supabase Dashboard → Edge Functions → Logs untuk detail'],
+    showDeploy: false,
+  };
+
   return (
     <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-2">
       <div className="flex items-center gap-2 text-sm font-semibold text-red-800">
-        <AlertTriangle size={16}/> Edge Function tidak dapat dijangkau
+        <AlertTriangle size={16}/> {guide.title}
       </div>
-      <p className="text-xs text-red-700 leading-relaxed">
-        Operasi reset password membutuhkan Edge Function <code className="bg-red-100 px-1 rounded font-mono">admin-reset-password</code> yang aktif di Supabase.
-        Kemungkinan penyebab:
-      </p>
+
+      {/* Pesan asli dari edge function */}
+      {message && (
+        <div className="bg-red-100 rounded-lg px-3 py-2">
+          <p className="text-xs text-red-800 font-mono break-all">
+            {errorCode && <span className="font-bold">[{errorCode}] </span>}{message}
+          </p>
+        </div>
+      )}
+
       <ul className="text-xs text-red-700 space-y-1 pl-4 list-disc">
-        <li>Edge Function belum di-deploy → jalankan: <code className="bg-red-100 px-1 rounded font-mono">supabase functions deploy admin-reset-password --no-verify-jwt</code></li>
-        <li>Session login sudah expired → logout lalu login kembali</li>
-        <li>Supabase project sedang pause (Free Tier) → buka Supabase Dashboard untuk mengaktifkan</li>
+        {guide.items.map((item, i) => <li key={i}>{item}</li>)}
       </ul>
+
+      {guide.showDeploy && (
+        <div className="bg-gray-900 rounded-lg px-3 py-2 mt-2">
+          <p className="text-xs text-green-400 font-mono">
+            $ supabase functions deploy admin-reset-password --no-verify-jwt
+          </p>
+        </div>
+      )}
+
+      {httpStatus === 403 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-1">
+          <p className="text-xs text-amber-800">
+            <strong>Perhatian:</strong> Jika akun Admin kamu berstatus <strong>Retired</strong> di tabel users,
+            edge function akan menolak request meski role-nya Administrator.
+            Ubah status ke <strong>Active</strong> via Supabase Dashboard → Table Editor → users → edit baris Admin.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -325,22 +407,56 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
   }
 
   // ── Ping health check ───────────────────────────────────────
-  // FIX: Sebelum operasi bulk, verifikasi edge function bisa dijangkau.
-  // Mengembalikan true jika OK, false jika tidak bisa dijangkau.
+  // Mengembalikan true jika OK.
+  // Jika gagal, set edgeFnStatus ke objek { httpStatus, errorCode, message }
+  // agar EdgeFunctionStatus bisa menampilkan panduan yang tepat.
+  //
+  // Penting: Edge function versi baru menaruh ping SEBELUM auth check,
+  // sehingga ping selalu berhasil jika function terdeploy dengan benar —
+  // terlepas dari status JWT atau role user.
   async function pingEdgeFunction() {
     setEdgeFnStatus('checking');
     try {
       const { data, error } = await supabase.functions.invoke('admin-reset-password', {
         body: { mode: 'ping' },
       });
-      if (error || !data?.ok) {
-        setEdgeFnStatus('error');
+
+      if (error) {
+        // FunctionsHttpError: edge function merespons dengan non-2xx
+        // FetchError: network level — function tidak terjangkau sama sekali
+        const httpStatus = error?.context?.status ?? 0;
+        let errorBody = {};
+        try {
+          // Coba ekstrak JSON response body dari error
+          errorBody = await error?.context?.json?.() ?? {};
+        } catch { /* response body bukan JSON */ }
+
+        setEdgeFnStatus({
+          httpStatus,
+          errorCode: errorBody?.error ?? error?.name ?? 'UNKNOWN',
+          message: errorBody?.message ?? error?.message ?? 'Tidak ada detail error',
+        });
         return false;
       }
+
+      if (!data?.ok) {
+        setEdgeFnStatus({
+          httpStatus: 200,
+          errorCode: 'UNEXPECTED_RESPONSE',
+          message: `Edge function merespons tapi ok=false: ${JSON.stringify(data)}`,
+        });
+        return false;
+      }
+
       setEdgeFnStatus('ok');
       return true;
-    } catch {
-      setEdgeFnStatus('error');
+    } catch (err) {
+      // Unexpected JS error (bukan dari supabase-js)
+      setEdgeFnStatus({
+        httpStatus: 0,
+        errorCode: 'JS_ERROR',
+        message: err?.message ?? String(err),
+      });
       return false;
     }
   }
@@ -381,10 +497,18 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
       });
 
       if (error) {
-        // Ini adalah error koneksi / HTTP — bukan error dari kode edge function
-        toast.error(`Koneksi ke edge function gagal: ${error.message}`);
+        // Ekstrak HTTP status dan pesan asli dari FunctionsHttpError
+        const httpStatus = error?.context?.status ?? 0;
+        let errorBody = {};
+        try { errorBody = await error?.context?.json?.() ?? {}; } catch { /* ignore */ }
+
+        setEdgeFnStatus({
+          httpStatus,
+          errorCode: errorBody?.error ?? 'HTTP_ERROR',
+          message: errorBody?.message ?? error?.message,
+        });
         setMassLoad(false);
-        setEdgeFnStatus('error');
+        toast.error(`Gagal (HTTP ${httpStatus || 'network error'}): ${errorBody?.message || error?.message}`);
         return;
       }
 
