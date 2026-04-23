@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Settings, Save, RefreshCw, Shield, Users, Database, Bell, KeyRound, MessageCircle, Send } from 'lucide-react';
+import { Settings, Save, RefreshCw, Shield, Users, Database, Bell, KeyRound, MessageCircle, Send, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const CONFIG_GROUPS = {
@@ -12,13 +12,52 @@ const CONFIG_GROUPS = {
   'Liturgi':            ['gcatholic_url'],
 };
 
+// ─── Komponen: Edge Function Health Banner ────────────────────
+// Ditampilkan sebelum operasi bulk untuk memberi tahu Admin
+// apakah edge function dapat dijangkau atau tidak.
+function EdgeFunctionStatus({ status }) {
+  if (!status) return null;
+  if (status === 'checking') {
+    return (
+      <div className="flex items-center gap-2 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
+        <div className="w-3 h-3 border-2 border-blue-400/40 border-t-blue-600 rounded-full animate-spin"/>
+        Memeriksa koneksi ke Edge Function...
+      </div>
+    );
+  }
+  if (status === 'ok') {
+    return (
+      <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-xl px-4 py-2.5">
+        <CheckCircle2 size={14}/> Edge Function aktif dan siap digunakan.
+      </div>
+    );
+  }
+  // status === 'error'
+  return (
+    <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-2">
+      <div className="flex items-center gap-2 text-sm font-semibold text-red-800">
+        <AlertTriangle size={16}/> Edge Function tidak dapat dijangkau
+      </div>
+      <p className="text-xs text-red-700 leading-relaxed">
+        Operasi reset password membutuhkan Edge Function <code className="bg-red-100 px-1 rounded font-mono">admin-reset-password</code> yang aktif di Supabase.
+        Kemungkinan penyebab:
+      </p>
+      <ul className="text-xs text-red-700 space-y-1 pl-4 list-disc">
+        <li>Edge Function belum di-deploy → jalankan: <code className="bg-red-100 px-1 rounded font-mono">supabase functions deploy admin-reset-password --no-verify-jwt</code></li>
+        <li>Session login sudah expired → logout lalu login kembali</li>
+        <li>Supabase project sedang pause (Free Tier) → buka Supabase Dashboard untuk mengaktifkan</li>
+      </ul>
+    </div>
+  );
+}
+
 // ─── Komponen: Quick Test Reset ──────────────────────────────
 function QuickTestReset({ members, genPassword, onReset }) {
   const [selUser,  setSelUser]  = React.useState('');
   const [tempPw,   setTempPw]   = React.useState('');
   const [showPw,   setShowPw]   = React.useState(false);
   const [loading,  setLoading]  = React.useState(false);
-  const [result,   setResult]   = React.useState(null); // {nickname, password, ok}
+  const [result,   setResult]   = React.useState(null);
 
   const user = members.find(m => m.id === selUser);
 
@@ -98,8 +137,7 @@ function QuickTestReset({ members, genPassword, onReset }) {
                   </div>
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText(`username: ${result.nickname}
-password: ${result.password}`);
+                      navigator.clipboard.writeText(`username: ${result.nickname}\npassword: ${result.password}`);
                       toast.success('Disalin!');
                     }}
                     className="btn-outline btn-sm text-xs ml-3">
@@ -121,27 +159,34 @@ password: ${result.password}`);
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
 export default function AdminPage() {
   const { profile } = useAuth();
-  const [configs, setConfigs]   = useState({});
-  const [users,   setUsers]     = useState([]);
-  const [tab,     setTab]       = useState('config');
-  const [loading, setLoading]   = useState(true);
-  const [saving,  setSaving]    = useState(false);
+  const [configs,    setConfigs]   = useState({});
+  const [users,      setUsers]     = useState([]);
+  const [tab,        setTab]       = useState('config');
+  const [loading,    setLoading]   = useState(true);
+  const [saving,     setSaving]    = useState(false);
   const [auditLog,   setAuditLog]  = useState([]);
   const [pwUsers,    setPwUsers]   = useState([]);
   const [loadingPw,  setLoadingPw] = useState(false);
   const [genResults, setGenResults]= useState([]);
-  const [massLoading,setMassLoad]  = useState(false);
-  const [massResults,setMassRes]   = useState([]);   // [{user, password, ok}]
+
+  // ── Mass reset state (dipisah dari genResults) ─────────────
+  const [massLoading,  setMassLoad]    = useState(false);
+  const [massResults,  setMassRes]     = useState([]);
+  // massProgress: { done, total, success, fail }
+  const [massProgress, setMassProgress]= useState(null);
+  // edgeFnStatus: null | 'checking' | 'ok' | 'error'
+  const [edgeFnStatus, setEdgeFnStatus]= useState(null);
 
   useEffect(() => { loadAll(); }, [tab]);
 
   async function loadAll() {
     setLoading(true);
-    if (tab === 'config')  await loadConfigs();
-    if (tab === 'users')   await loadUsers();
-    if (tab === 'audit')   await loadAudit();
+    if (tab === 'config')    await loadConfigs();
+    if (tab === 'users')     await loadUsers();
+    if (tab === 'audit')     await loadAudit();
     if (tab === 'passwords') await loadPwUsers();
     setLoading(false);
   }
@@ -189,7 +234,6 @@ export default function AdminPage() {
   async function changeRole(userId, newRole) {
     const { error } = await supabase.from('users').update({ role: newRole }).eq('id', userId);
     if (error) { toast.error('Gagal ubah role'); return; }
-    // Audit log
     await supabase.from('audit_logs').insert({ actor_id: profile?.id, action: 'CHANGE_ROLE', target_id: userId, detail: `→ ${newRole}` });
     toast.success('Role diubah');
     loadUsers();
@@ -218,7 +262,7 @@ export default function AdminPage() {
   async function manualBackup() {
     toast.loading('Mengambil data backup...', { id: 'backup' });
     try {
-      const [users, events, scans, swaps, rekap] = await Promise.all([
+      const [u, ev, sc, sw, rk] = await Promise.all([
         supabase.from('users').select('*'),
         supabase.from('events').select('*'),
         supabase.from('scan_records').select('*'),
@@ -227,11 +271,8 @@ export default function AdminPage() {
       ]);
       const backup = {
         exported_at: new Date().toISOString(),
-        users: users.data,
-        events: events.data,
-        scan_records: scans.data,
-        swap_requests: swaps.data,
-        rekap_poin: rekap.data,
+        users: u.data, events: ev.data, scan_records: sc.data,
+        swap_requests: sw.data, rekap_poin: rk.data,
       };
       const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
       const link = document.createElement('a');
@@ -248,7 +289,6 @@ export default function AdminPage() {
 
   async function loadPwUsers() {
     setLoadingPw(true);
-    // Anggota yang must_change_password = TRUE atau belum punya akun Auth
     const { data } = await supabase
       .from('users')
       .select('id, nickname, nama_panggilan, hp_ortu, hp_anak, role, status, must_change_password, email')
@@ -264,7 +304,7 @@ export default function AdminPage() {
   }
 
   function getSalam() {
-    const h = new Date(new Date().getTime() + 7*3600*1000).getUTCHours();
+    const h = new Date(new Date().getTime() + 7 * 3600 * 1000).getUTCHours();
     if (h >= 5  && h < 11) return 'pagi';
     if (h >= 11 && h < 15) return 'siang';
     if (h >= 15 && h < 19) return 'sore';
@@ -284,73 +324,192 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     );
   }
 
+  // ── Ping health check ───────────────────────────────────────
+  // FIX: Sebelum operasi bulk, verifikasi edge function bisa dijangkau.
+  // Mengembalikan true jika OK, false jika tidak bisa dijangkau.
+  async function pingEdgeFunction() {
+    setEdgeFnStatus('checking');
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-reset-password', {
+        body: { mode: 'ping' },
+      });
+      if (error || !data?.ok) {
+        setEdgeFnStatus('error');
+        return false;
+      }
+      setEdgeFnStatus('ok');
+      return true;
+    } catch {
+      setEdgeFnStatus('error');
+      return false;
+    }
+  }
+
+  // ── Mass Reset — pakai mode provision_all (satu HTTP call) ──
+  // FIX ROOT CAUSE 2: Sebelumnya memanggil edge function 131 kali secara sequential
+  // (satu call per user), yang menyebabkan 65-130 detik total dan sangat rentan gagal.
+  // Mode provision_all memproses semua user dalam SATU HTTP call ke edge function,
+  // di mana server yang melakukan loop — jauh lebih cepat dan reliable.
+  async function massResetAllPasswords() {
+    const activeCount = users.filter(u => u.status === 'Active' && u.role !== 'Administrator').length;
+    if (!confirm(
+      `Reset password ${activeCount} anggota aktif (Administrator TIDAK termasuk)?\n\n` +
+      `Proses dilakukan server-side dalam satu request — jauh lebih cepat dari sebelumnya.\n` +
+      `Setiap anggota wajib mengganti password saat login berikutnya.`
+    )) return;
+
+    setMassLoad(true);
+    setMassRes([]);
+    setMassProgress(null);
+    setEdgeFnStatus(null);
+
+    // Langkah 1: Ping dulu — pastikan edge function bisa dijangkau
+    // Ini mencegah semua request gagal tanpa feedback yang jelas.
+    const reachable = await pingEdgeFunction();
+    if (!reachable) {
+      setMassLoad(false);
+      toast.error('Edge Function tidak dapat dijangkau. Lihat panduan di atas.');
+      return;
+    }
+
+    // Langkah 2: Satu call ke mode provision_all
+    // Server generate password acak dan memproses semua user.
+    setMassProgress({ done: 0, total: activeCount, success: 0, fail: 0 });
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-reset-password', {
+        body: { mode: 'provision_all' },
+      });
+
+      if (error) {
+        // Ini adalah error koneksi / HTTP — bukan error dari kode edge function
+        toast.error(`Koneksi ke edge function gagal: ${error.message}`);
+        setMassLoad(false);
+        setEdgeFnStatus('error');
+        return;
+      }
+
+      if (!data?.ok || !Array.isArray(data.results)) {
+        toast.error(`Edge function error: ${data?.error || 'Respons tidak valid'}`);
+        setMassLoad(false);
+        return;
+      }
+
+      // Langkah 3: Petakan hasil provision_all ke format yang dipakai UI
+      // provision_all mengembalikan: [{nickname, nama, email, lingkungan, hp_ortu, hp_anak, password, ok, action, error}]
+      // massResults di UI mengharapkan: [{user: {...}, password, ok, error}]
+      const results = data.results.map(r => ({
+        user: {
+          nama_panggilan: r.nama,
+          nickname:       r.nickname,
+          hp_ortu:        r.hp_ortu,
+          hp_anak:        r.hp_anak,
+          lingkungan:     r.lingkungan || '',
+        },
+        password: r.password,
+        ok:       r.ok,
+        error:    r.error,
+      }));
+
+      const successCount = results.filter(r => r.ok).length;
+      const failCount    = results.filter(r => !r.ok).length;
+
+      setMassRes(results);
+      setMassProgress({ done: results.length, total: results.length, success: successCount, fail: failCount });
+
+      // Audit log
+      await supabase.from('audit_logs').insert({
+        actor_id: profile?.id,
+        action:   'MASS_RESET_PASSWORD',
+        detail:   `${successCount}/${results.length} berhasil via provision_all`,
+      }).catch(() => {}); // audit log tidak boleh gagalkan flow utama
+
+      if (successCount > 0) {
+        toast.success(`✅ ${successCount}/${results.length} password berhasil direset!`);
+        // Hanya download CSV jika ada yang berhasil — CSV kosong tidak berguna
+        downloadMassResetCSV(results.filter(r => r.ok));
+      } else {
+        toast.error(`Semua ${failCount} reset gagal. Cek error di tabel.`);
+      }
+    } catch (err) {
+      toast.error(`Error tidak terduga: ${err.message}`);
+    } finally {
+      setMassLoad(false);
+    }
+  }
+
+  // ── Generate bulk passwords (tab Passwords) ─────────────────
+  // Sama seperti mass reset tapi untuk tab "Kirim Password" — juga difix
+  // dari individual loop ke provision_all + mapping ke genResults format.
   async function generateBulkPasswords() {
     const targets = pwUsers.filter(u => u.must_change_password);
     if (!targets.length) {
       toast('Semua anggota sudah punya password aktif');
       return;
     }
-    if (!confirm(`Generate password baru untuk ${targets.length} anggota yang belum/wajib ganti password?`)) return;
+    if (!confirm(`Generate password baru untuk ${targets.length} anggota yang wajib ganti password?`)) return;
 
     setLoadingPw(true);
-    const results = [];
-    for (const u of targets) {
-      const pw = genPassword(8);
-      try {
-        const { data, error } = await supabase.functions.invoke('admin-reset-password', {
-          body: { mode: 'reset', user_id: u.id, new_password: pw }
-        });
-        if (error) throw error;
-        if (data?.ok === false) throw new Error(data.error);
-        results.push({ user: u, password: pw, error: null });
-      } catch (e) {
-        results.push({ user: u, password: pw, error: e.message });
-      }
+    setEdgeFnStatus(null);
+
+    const reachable = await pingEdgeFunction();
+    if (!reachable) {
+      setLoadingPw(false);
+      toast.error('Edge Function tidak dapat dijangkau.');
+      return;
     }
-    setGenResults(results);
-    setLoadingPw(false);
-    toast.success(`${results.filter(r=>!r.error).length} password berhasil digenerate!`);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-reset-password', {
+        body: { mode: 'provision_all' },
+      });
+
+      if (error || !data?.ok) {
+        toast.error(`Gagal: ${error?.message || data?.error}`);
+        setLoadingPw(false);
+        return;
+      }
+
+      // Filter hanya yang masuk target (must_change_password), petakan format
+      const targetNicknames = new Set(targets.map(t => t.nickname));
+      const results = (data.results || [])
+        .filter(r => targetNicknames.has(r.nickname))
+        .map(r => ({
+          user: {
+            nama_panggilan: r.nama,
+            nickname:       r.nickname,
+            hp_ortu:        r.hp_ortu,
+            hp_anak:        r.hp_anak,
+          },
+          password: r.password,
+          error:    r.ok ? null : r.error,
+        }));
+
+      setGenResults(results);
+      toast.success(`${results.filter(r => !r.error).length} password berhasil digenerate!`);
+    } catch (err) {
+      toast.error(`Error: ${err.message}`);
+    } finally {
+      setLoadingPw(false);
+    }
   }
 
   function openWA(user, password) {
-    const hp = (user.hp_ortu || user.hp_anak || '').replace(/\D/g,'');
+    const hp = (user.hp_ortu || user.hp_anak || '').replace(/\D/g, '');
     if (!hp) { toast.error(`${user.nama_panggilan}: No. HP tidak ada`); return; }
     const phone = hp.startsWith('0') ? '62' + hp.slice(1) : hp;
     window.open(`https://wa.me/${phone}?text=${buildWAMsg(user, password)}`, '_blank');
   }
 
-  async function massResetAllPasswords() {
-    // Exclude Administrator accounts from mass reset
-    const targets = users.filter(u => u.status === 'Active' && u.role !== 'Administrator');
-    if (!confirm(`Reset password ${targets.length} anggota aktif (Admin TIDAK termasuk)?\nSetiap orang akan wajib ganti password saat login.`)) return;
-    setMassLoad(true);
-    setMassRes([]);
-    const results = [];
-    for (const u of targets) {
-      const pw = genPassword(8);
-      try {
-        const { data, error } = await supabase.functions.invoke('admin-reset-password', { 
-          body: { mode: 'reset', user_id: u.id, new_password: pw } 
-        });
-        if (error) throw error;
-        if (data?.ok === false) throw new Error(data.error);
-        results.push({ user: u, password: pw, ok: true });
-      } catch (e) {
-        results.push({ user: u, password: pw, ok: false, error: e.message });
-      }
-    }
-    setMassRes(results);
-    setMassLoad(false);
-    const ok = results.filter(r=>r.ok).length;
-    toast.success(`${ok}/${results.length} password berhasil direset! (Admin dilewati)`);
-    // Auto-download CSV
-    downloadMassResetCSV(results);
-  }
-
+  // FIX: CSV hanya download hasil yang OK saja (tidak download jika semua gagal)
   function downloadMassResetCSV(results) {
-    const rows = results.map(r => [
-      r.user.nickname, r.user.nama_panggilan, r.user.lingkungan,
-      r.password, r.ok ? 'Berhasil' : 'Gagal',
+    const okResults = results.filter(r => r.ok);
+    if (!okResults.length) {
+      toast('Tidak ada hasil berhasil untuk diunduh');
+      return;
+    }
+    const rows = okResults.map(r => [
+      r.user.nickname, r.user.nama_panggilan, r.user.lingkungan || '',
+      r.password, 'Berhasil',
       r.user.hp_ortu || r.user.hp_anak || '',
     ]);
     const header = 'Username,Nama,Lingkungan,Password Baru,Status,HP Ortu';
@@ -362,6 +521,7 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
     a.click();
   }
 
+  // ═══════════════════════════════════════════════════════════
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -406,7 +566,6 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
               </div>
             </div>
           ))}
-
           <button onClick={saveConfigs} disabled={saving} className="btn-primary gap-2">
             <Save size={16} /> {saving ? 'Menyimpan...' : 'Simpan Konfigurasi'}
           </button>
@@ -416,7 +575,8 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
       {/* Users tab */}
       {tab === 'users' && (
         <div className="space-y-4">
-          {/* Mass password reset */}
+
+          {/* Mass password reset — FIXED */}
           <div className="card border-red-100 bg-red-50/30 space-y-3">
             <h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm">
               <KeyRound size={15}/> Reset Password Massal
@@ -424,41 +584,93 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
             <p className="text-xs text-red-700">
               Reset password semua anggota sekaligus. Cocok untuk deployment pertama kali.
               Setiap anggota wajib mengganti password saat login berikutnya.
+              Password di-generate server-side dalam <strong>satu request</strong> — tidak lagi satu-per-satu.
             </p>
+
+            {/* Edge function status banner */}
+            <EdgeFunctionStatus status={edgeFnStatus}/>
+
+            {/* Progress bar saat proses berjalan */}
+            {massLoading && massProgress && (
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs text-gray-500">
+                  <span>Memproses {massProgress.total} anggota...</span>
+                  <span>{massProgress.done}/{massProgress.total}</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-brand-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${massProgress.total ? (massProgress.done / massProgress.total) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-3 flex-wrap items-center">
-              <button onClick={massResetAllPasswords} disabled={massLoading}
-                className="btn-danger gap-2 transition-all hover:scale-105 active:scale-95">
+              <button
+                onClick={massResetAllPasswords}
+                disabled={massLoading}
+                className="btn-danger gap-2 transition-all hover:scale-105 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed disabled:scale-100">
                 <KeyRound size={15}/>
-                {massLoading ? 'Mereset...' : `🔑 Reset Semua (${users.filter(u=>u.status==='Active').length} anggota aktif)`}
+                {massLoading
+                  ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> Memproses...</>
+                  : `🔑 Reset Semua (${users.filter(u => u.status === 'Active').length} anggota aktif)`
+                }
               </button>
+
+              {/* Hasil summary + tombol download — hanya muncul jika ada sukses */}
               {massResults.length > 0 && (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs text-gray-500">
-                    ✅ {massResults.filter(r=>r.ok).length} berhasil · ❌ {massResults.filter(r=>!r.ok).length} gagal
+                    ✅ {massResults.filter(r => r.ok).length} berhasil
+                    {massResults.filter(r => !r.ok).length > 0 && (
+                      <> · ❌ {massResults.filter(r => !r.ok).length} gagal</>
+                    )}
                   </span>
-                  <button onClick={() => downloadMassResetCSV(massResults)}
-                    className="btn-outline btn-sm gap-1 text-xs transition-all hover:scale-105">
-                    📥 Unduh CSV
-                  </button>
+                  {massResults.some(r => r.ok) && (
+                    <button onClick={() => downloadMassResetCSV(massResults)}
+                      className="btn-outline btn-sm gap-1 text-xs transition-all hover:scale-105">
+                      📥 Unduh CSV (yang berhasil)
+                    </button>
+                  )}
                 </div>
               )}
             </div>
+
+            {/* Hasil tabel */}
             {massResults.length > 0 && (
               <div className="overflow-x-auto max-h-64 border border-red-100 rounded-xl">
                 <table className="tbl text-xs">
-                  <thead><tr><th>Nama</th><th>Username</th><th>Password Baru</th><th>HP Ortu</th><th>WA</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Nama</th>
+                      <th>Username</th>
+                      <th>Password Baru</th>
+                      <th>HP Ortu</th>
+                      <th>WA</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {massResults.map((r,i) => (
+                    {massResults.map((r, i) => (
                       <tr key={i} className={r.ok ? '' : 'bg-red-50'}>
                         <td className="font-medium">{r.user.nama_panggilan}</td>
                         <td className="font-mono text-gray-600">{r.user.nickname}</td>
-                        <td>{r.ok ? <code className="bg-gray-100 px-2 py-0.5 rounded font-bold text-brand-800">{r.password}</code> : <span className="text-red-500">❌ {r.error}</span>}</td>
-                        <td className="text-gray-500 text-xs">{r.user.hp_ortu || r.user.hp_anak || '—'}</td>
-                        <td>{r.ok && (r.user.hp_ortu||r.user.hp_anak) && (
-                          <button onClick={() => openWA(r.user, r.password)} className="btn-primary btn-sm gap-1 text-xs transition-all hover:scale-105 active:scale-95">
-                            <MessageCircle size={12}/> WA
-                          </button>
-                        )}</td>
+                        <td>
+                          {r.ok
+                            ? <code className="bg-gray-100 px-2 py-0.5 rounded font-bold text-brand-800">{r.password}</code>
+                            : <span className="text-red-500">❌ {r.error}</span>
+                          }
+                        </td>
+                        <td className="text-gray-500">{r.user.hp_ortu || r.user.hp_anak || '—'}</td>
+                        <td>
+                          {r.ok && (r.user.hp_ortu || r.user.hp_anak) && (
+                            <button
+                              onClick={() => openWA(r.user, r.password)}
+                              className="btn-primary btn-sm gap-1 text-xs transition-all hover:scale-105 active:scale-95">
+                              <MessageCircle size={12}/> WA
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -466,64 +678,66 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
               </div>
             )}
           </div>
+
+          {/* Daftar user + role */}
           <div className="card overflow-hidden p-0">
-          <div className="overflow-x-auto">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Nama</th>
-                  <th>Email</th>
-                  <th>Role</th>
-                  <th>Status</th>
-                  <th>Aksi</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr><td colSpan={5} className="text-center py-8 text-gray-400">Memuat...</td></tr>
-                ) : users.map(u => (
-                  <tr key={u.id}>
-                    <td>
-                      <div className="font-semibold text-gray-900">{u.nama_panggilan}</div>
-                      <div className="text-xs text-gray-400">@{u.nickname}</div>
-                    </td>
-                    <td className="text-xs text-gray-500">{u.email}</td>
-                    <td>
-                      <select
-                        value={u.role}
-                        onChange={e => changeRole(u.id, e.target.value)}
-                        className="text-xs border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-800"
-                      >
-                        {ROLES.map(r => <option key={r}>{r}</option>)}
-                      </select>
-                    </td>
-                    <td>
-                      <span className={`badge ${u.is_suspended ? 'badge-red' : u.status === 'Active' ? 'badge-green' : 'badge-gray'}`}>
-                        {u.is_suspended ? `Suspended s/d ${u.suspended_until}` : u.status}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="flex gap-1">
-                        <button onClick={() => suspendUser(u)}
-                          className={`text-xs px-2 py-1 rounded-lg ${u.is_suspended ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                          {u.is_suspended ? 'Aktifkan' : 'Suspend'}
-                        </button>
-                        <button onClick={() => resetPassword(u)}
-                          className="text-xs px-2 py-1 rounded-lg bg-gray-100 text-gray-600">
-                          Reset PW
-                        </button>
-                      </div>
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Nama</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Aksi</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr><td colSpan={5} className="text-center py-8 text-gray-400">Memuat...</td></tr>
+                  ) : users.map(u => (
+                    <tr key={u.id}>
+                      <td>
+                        <div className="font-semibold text-gray-900">{u.nama_panggilan}</div>
+                        <div className="text-xs text-gray-400">@{u.nickname}</div>
+                      </td>
+                      <td className="text-xs text-gray-500">{u.email}</td>
+                      <td>
+                        <select
+                          value={u.role}
+                          onChange={e => changeRole(u.id, e.target.value)}
+                          className="text-xs border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-800"
+                        >
+                          {ROLES.map(r => <option key={r}>{r}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <span className={`badge ${u.is_suspended ? 'badge-red' : u.status === 'Active' ? 'badge-green' : 'badge-gray'}`}>
+                          {u.is_suspended ? `Suspended s/d ${u.suspended_until}` : u.status}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="flex gap-1">
+                          <button onClick={() => suspendUser(u)}
+                            className={`text-xs px-2 py-1 rounded-lg ${u.is_suspended ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {u.is_suspended ? 'Aktifkan' : 'Suspend'}
+                          </button>
+                          <button onClick={() => resetPassword(u)}
+                            className="text-xs px-2 py-1 rounded-lg bg-gray-100 text-gray-600">
+                            Reset PW
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
-      </div>
       )}
 
-      {/* Audit log tab */}
+      {/* Passwords tab */}
       {tab === 'passwords' && (
         <div className="space-y-4">
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
@@ -531,16 +745,22 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
             <p className="text-xs text-blue-700 mt-1">
               Generate password otomatis untuk semua anggota yang <strong>wajib ganti password</strong>,
               lalu kirim ke nomor HP orang tua masing-masing via WA.
-              Password yang digenerate akan ditampilkan di bawah — salin atau klik tombol WA per anggota.
             </p>
           </div>
 
+          {/* Edge function status banner untuk tab passwords */}
+          <EdgeFunctionStatus status={edgeFnStatus}/>
+
           <div className="flex gap-3 flex-wrap items-center">
             <button onClick={generateBulkPasswords} disabled={loadingPw} className="btn-primary gap-2">
-              <KeyRound size={16}/> {loadingPw ? 'Generating...' : 'Generate Password Semua'}
+              <KeyRound size={16}/>
+              {loadingPw
+                ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> Generating...</>
+                : 'Generate Password Semua'
+              }
             </button>
             {genResults.length > 0 && (
-              <span className="text-xs text-gray-500">{genResults.length} password digenerate</span>
+              <span className="text-xs text-gray-500">{genResults.filter(r => !r.error).length} password digenerate</span>
             )}
           </div>
 
@@ -567,32 +787,32 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
                         <td className="font-medium text-sm">{r.user.nama_panggilan}</td>
                         <td className="font-mono text-xs text-gray-600">{r.user.nickname}</td>
                         <td>
-                          <code className="bg-gray-100 px-2 py-0.5 rounded text-sm font-mono font-bold text-brand-800">
-                            {r.password}
-                          </code>
-                          {r.error && <span className="text-red-500 text-xs ml-2">❌ {r.error}</span>}
+                          {r.error
+                            ? <span className="text-red-500 text-xs">❌ {r.error}</span>
+                            : <code className="bg-gray-100 px-2 py-0.5 rounded text-sm font-mono font-bold text-brand-800">{r.password}</code>
+                          }
                         </td>
                         <td className="text-xs text-gray-500">{r.user.hp_ortu || r.user.hp_anak || '—'}</td>
                         <td>
                           <div className="flex gap-1.5 flex-wrap">
-                            {(r.user.hp_ortu || r.user.hp_anak) ? (
+                            {!r.error && (r.user.hp_ortu || r.user.hp_anak) ? (
                               <button onClick={() => openWA(r.user, r.password)}
                                 className="btn-primary btn-sm gap-1 text-xs">
                                 <MessageCircle size={13}/> WA
                               </button>
                             ) : (
-                              <span className="text-xs text-orange-400">No HP</span>
+                              !r.error && <span className="text-xs text-orange-400">No HP</span>
                             )}
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(
-                                  `username: ${r.user.nickname}\npassword: ${r.password}`
-                                );
-                                toast.success(`Disalin! User: ${r.user.nickname}`);
-                              }}
-                              className="btn-outline btn-sm text-xs">
-                              Salin
-                            </button>
+                            {!r.error && (
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(`username: ${r.user.nickname}\npassword: ${r.password}`);
+                                  toast.success(`Disalin! User: ${r.user.nickname}`);
+                                }}
+                                className="btn-outline btn-sm text-xs">
+                                Salin
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -603,7 +823,7 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
             </div>
           )}
 
-          {/* Quick Test: reset satu akun untuk test login */}
+          {/* Quick Test Reset */}
           <div className="card space-y-3">
             <h3 className="font-semibold text-gray-700 flex items-center gap-2 text-sm">
               <Shield size={15} className="text-brand-800"/> Test Login — Reset Password Sementara
@@ -619,7 +839,7 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
                 const { data, error } = await supabase.functions.invoke('admin-reset-password', {
                   body: { mode: 'reset', user_id: userId, new_password: pw }
                 });
-                if (error) return { ok: false, error: error.message };
+                if (error) return { ok: false, error: `Koneksi gagal: ${error.message}` };
                 if (data?.ok === false) return { ok: false, error: data.error };
                 return { ok: true };
               }}
@@ -631,8 +851,8 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
             <div className="px-4 py-3 border-b border-gray-100">
               <h3 className="font-semibold text-gray-700">Semua Anggota Aktif</h3>
               <p className="text-xs text-gray-400 mt-0.5">
-                {pwUsers.filter(u=>u.must_change_password).length} perlu ganti password ·
-                {pwUsers.filter(u=>!u.hp_ortu && !u.hp_anak).length} tanpa nomor HP
+                {pwUsers.filter(u => u.must_change_password).length} perlu ganti password ·{' '}
+                {pwUsers.filter(u => !u.hp_ortu && !u.hp_anak).length} tanpa nomor HP
               </p>
             </div>
             <div className="overflow-x-auto max-h-72">
@@ -653,7 +873,9 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
                           : <span className="badge-green text-xs">✓ OK</span>
                         }
                       </td>
-                      <td className="text-xs text-gray-500">{u.hp_ortu || u.hp_anak || <span className="text-orange-400">Tidak ada</span>}</td>
+                      <td className="text-xs text-gray-500">
+                        {u.hp_ortu || u.hp_anak || <span className="text-orange-400">Tidak ada</span>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -663,6 +885,7 @@ Mohon login menggunakan akun tersebut, kemudian langsung mengganti password sesu
         </div>
       )}
 
+      {/* Audit log tab */}
       {tab === 'audit' && (
         <div className="card overflow-hidden p-0">
           <div className="overflow-x-auto max-h-[60vh]">
