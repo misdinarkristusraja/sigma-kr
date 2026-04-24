@@ -325,43 +325,48 @@ export default function AdminPage() {
     setMassResults([]);
     setMassProgress({ status: 'running', total: targetCount });
 
-    const { data, error } = await supabase.rpc('admin_provision_all');
+    // try/finally: setMassLoading(false) SELALU dipanggil terlepas dari apapun.
+    // Bug sebelumnya: dipanggil SETELAH audit_logs.insert (~300ms) sehingga
+    // banner hijau muncul tapi tombol spinner masih jalan selama jeda itu.
+    try {
+      const { data, error } = await supabase.rpc('admin_provision_all');
 
-    if (error) {
-      setMassProgress({ status: 'error', error: error.message });
+      if (error) {
+        setMassProgress({ status: 'error', error: error.message });
+        toast.error('RPC gagal: ' + error.message);
+        return;
+      }
+
+      if (!data?.ok) {
+        const msg = data?.message || data?.error || 'Response tidak valid';
+        setMassProgress({ status: 'error', error: msg });
+        toast.error(msg);
+        return;
+      }
+
+      const results      = Array.isArray(data.results) ? data.results : [];
+      const successCount = data.success ?? results.filter(r => r.ok).length;
+      const failCount    = data.fail    ?? results.filter(r => !r.ok).length;
+
+      setMassResults(results);
+      setMassProgress({ status: 'done', total: results.length, success: successCount, fail: failCount });
+
+      if (successCount > 0) {
+        toast.success(`✅ ${successCount}/${results.length} password berhasil direset!`);
+        downloadCSV(results.filter(r => r.ok));
+      } else {
+        toast.error(`Semua ${failCount} reset gagal. Lihat detail di tabel.`);
+      }
+
+      // Fire-and-forget — tidak boleh memblokir UI atau menahan loading state
+      supabase.from('audit_logs').insert({
+        actor_id: profile?.id,
+        action:   'MASS_RESET_PASSWORD',
+        detail:   `${successCount}/${results.length} berhasil via admin_provision_all`,
+      }).catch(() => {});
+
+    } finally {
       setMassLoading(false);
-      toast.error('RPC gagal: ' + error.message);
-      return;
-    }
-
-    if (!data?.ok) {
-      const msg = data?.message || data?.error || 'Response tidak valid';
-      setMassProgress({ status: 'error', error: msg });
-      setMassLoading(false);
-      toast.error(msg);
-      return;
-    }
-
-    const results = Array.isArray(data.results) ? data.results : [];
-    const successCount = data.success ?? results.filter(r => r.ok).length;
-    const failCount    = data.fail   ?? results.filter(r => !r.ok).length;
-
-    setMassResults(results);
-    setMassProgress({ status: 'done', total: results.length, success: successCount, fail: failCount });
-
-    await supabase.from('audit_logs').insert({
-      actor_id: profile?.id,
-      action:   'MASS_RESET_PASSWORD',
-      detail:   `${successCount}/${results.length} berhasil via admin_provision_all`,
-    }).catch(() => {});
-
-    setMassLoading(false);
-
-    if (successCount > 0) {
-      toast.success(`✅ ${successCount}/${results.length} password berhasil direset!`);
-      downloadCSV(results.filter(r => r.ok));
-    } else {
-      toast.error(`Semua ${failCount} reset gagal. Lihat detail di tabel.`);
     }
   }
 
